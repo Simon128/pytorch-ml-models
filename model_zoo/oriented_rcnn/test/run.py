@@ -1,5 +1,4 @@
 import json
-import shapely.wkt
 import cv2
 import os
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
@@ -8,6 +7,7 @@ import torchvision
 from ..model import OrientedRCNN
 from ..anchor_generation import AnchorGenerator
 from ..losses import rpn_loss
+from ..utils import rotated_iou, fake_2d_to_3d
 import numpy as np
 
 # DETECTRON 2!
@@ -25,6 +25,7 @@ if __name__ == "__main__":
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
     x = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
+    x = x.repeat((2, 1, 1, 1))
 
     # boxes = []
     # labels = []
@@ -51,20 +52,37 @@ if __name__ == "__main__":
     cfg = {
 
     }
+    
 
     backbone = resnet_fpn_backbone('resnet50', pretrained=False, norm_layer=None, trainable_layers=5).to(device)
     model = OrientedRCNN(backbone, cfg).to(device)
     anchor_generator = AnchorGenerator(cfg, device=device)
 
+    # test iou 
+    # gt_box = torch.tensor([
+    #     [0, 0],
+    #     [2, 0],
+    #     [2, 4],
+    #     [0, 4]
+    # ]).unsqueeze(0).unsqueeze(1)
+    # test_box = torch.tensor([
+    #     [0, 0],
+    #     [1, 0],
+    #     [1, 2],
+    #     [0, 2]
+    # ]).unsqueeze(0).unsqueeze(1).unsqueeze(-1).unsqueeze(-1)
+    # test = rotated_iou(test_box, gt_box)
+
     out = model(x.to(device))
     # [8, 8, 8, 8, 8] corresponds to [32, 64, 128, 256, 512] in orig image
     anchors = anchor_generator.generate_like_fpn(out["backbone_out"], [8, 8, 8, 8, 8])
-    
 
+    gt  = ground_truth["boxes"].unsqueeze(0).to(device)
+    gt = gt.repeat((2, 1, 1, 1))
 
     loss = 0
     for k, v in out["rpn_out"].items():
         #sanity = rpn_loss(anchors[k], ground_truth["boxes"], ground_truth["labels"], ground_truth["boxes"]) 
-        loss += rpn_loss(anchors[k], v["anchor_offsets"], v["objectness_scores"], ground_truth["boxes"].unsqueeze(0).to(device))
+        rpn_loss(anchors[k], v["anchor_offsets"], v["objectness_scores"], gt)
 
     a = 5

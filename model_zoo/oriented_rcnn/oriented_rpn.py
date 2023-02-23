@@ -19,7 +19,7 @@ class OrientedRPN(nn.Module):
             {str(i): nn.Conv2d(256, 6 * self.num_anchors, 1, 1) for i in range(self.fpn_level_num)}
         )
         self.objectness_branch = nn.ModuleDict(
-            {str(i): nn.Conv2d(256, 1, 1, 1) for i in range(self.fpn_level_num)}
+            {str(i): nn.Conv2d(256, self.num_anchors, 1, 1) for i in range(self.fpn_level_num)}
         )
 
     def forward_single(self, x: torch.Tensor, fpn_level: str):

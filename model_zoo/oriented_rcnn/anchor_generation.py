@@ -50,26 +50,4 @@ class AnchorGenerator:
             ay = torch.stack([ay for _ in range(w)], dim=1)
 
             result[idx, :, :, :] = torch.stack((ax, ay, aw, ah), dim=0)
-
-        # import cv2 
-        # import os
-        # test = result[1, :, 180, 140]
-        # image = cv2.imread(os.path.join(os.path.dirname(os.path.abspath(__file__)),"test", "test_img.tif"), cv2.IMREAD_UNCHANGED)
-        # # Blue color in BGR
-        # color = (255, 0, 0)
-        
-        # # Line thickness of 2 px
-        # thickness = 2
-        # # Using cv2.rectangle() method
-        # # Draw a rectangle with blue line borders of thickness of 2 px
-        # start_point = (int(max(0, test[0].item() - test[2].item()/2)), int(max(0, test[1].item() - test[3].item()/2)))
-        # end_point = (int(test[0].item() + test[2].item()/2), int(test[1].item() + test[3].item()/2))
-        # image = cv2.rectangle(image, start_point, end_point, color, thickness)
-        
-        # # Displaying the image 
-        # cv2.imshow("test", image) 
-        # cv2.waitKey()
-
         return result
-
-
