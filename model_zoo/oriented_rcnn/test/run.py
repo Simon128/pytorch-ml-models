@@ -7,7 +7,6 @@ import torchvision
 from ..model import OrientedRCNN
 from ..anchor_generation import AnchorGenerator
 from ..losses import rpn_loss
-from ..utils import rotated_iou, fake_2d_to_3d
 import numpy as np
 
 # DETECTRON 2!
@@ -26,6 +25,18 @@ if __name__ == "__main__":
 
     x = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
     x = x.repeat((2, 1, 1, 1))
+
+    for b in ground_truth["boxes"]:
+        x = torch.min(b[:, 0]).to(torch.int).cpu().item() // 2
+        y = torch.min(b[:, 1]).to(torch.int).cpu().item() // 2
+        xmax = torch.max(b[:, 0]).to(torch.int).cpu().item() // 2
+        ymax = torch.max(b[:, 1]).to(torch.int).cpu().item() // 2
+        tl = [x,y] 
+        br = [xmax,ymax] 
+        image = cv2.resize(image, (512, 512))
+        image = cv2.rectangle(image, tl, br, (0, 255, 0), 2)
+
+    cv2.imwrite("test.png", image)
 
     # boxes = []
     # labels = []
@@ -83,6 +94,6 @@ if __name__ == "__main__":
     loss = 0
     for k, v in out["rpn_out"].items():
         #sanity = rpn_loss(anchors[k], ground_truth["boxes"], ground_truth["labels"], ground_truth["boxes"]) 
-        rpn_loss(anchors[k], v["anchor_offsets"], v["objectness_scores"], gt)
+        loss = rpn_loss(anchors[k], v["anchor_offsets"], v["objectness_scores"], gt)
 
     a = 5

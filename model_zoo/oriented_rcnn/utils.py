@@ -3,27 +3,25 @@ from pytorch3d.ops import box3d_overlap
 
 import numpy as np
 
-
-
 def offsets_to_proposal(anchor: torch.Tensor, offset: torch.Tensor):
     # offset: (δx, δy , δw, δh, δα, δβ)
     # anchor: (ax, ay , aw, ah)
     # w = aw · e^{δw}
     w = anchor[:, :, 2, :, :] * torch.exp(offset[:, :, 2, :, :])
-    # deviation from original paper: preventing crooked rectangles
+    # deviation from original paper: preventing rectangles w < 1
     w = torch.maximum(w, torch.ones_like(w))
     # h = ah · eδh
     h = anchor[:, :, 3, :, :] * torch.exp(offset[:, :, 3, :, :])
-    # deviation from original paper: preventing crooked rectangles
+    # deviation from original paper: preventing rectangles w < 1
     h = torch.maximum(h, torch.ones_like(h))
     # ∆α = δα · w 
     delta_alpha = offset[:, :, 4, :, :] * w
-    # deviation from original paper: preventing crooked rectangles
+    # deviation from original paper: restricting alpha to outer rect
     delta_alpha = torch.maximum(delta_alpha, w/2)
     delta_alpha = torch.minimum(delta_alpha, -w/2)
     # ∆β = δβ · h 
     delta_beta = offset[:, :, 5, :, :] * h
-    # deviation from original paper: preventing crooked rectangles
+    # deviation from original paper: restricting beta to outer rect
     delta_beta = torch.maximum(delta_beta, h/2)
     delta_beta = torch.minimum(delta_beta, -h/2)
     # x = δx · aw + ax
@@ -163,7 +161,6 @@ def midpoint_offset_representation_to_coords(repr: torch.Tensor):
 
     return result
 
-    
 
 def fake_2d_to_3d(boxes: torch.Tensor):
     '''
@@ -186,6 +183,7 @@ def fake_2d_to_3d(boxes: torch.Tensor):
     one_depth = torch.concat((torch.zeros(dim), torch.ones((dim))), dim=2).to(boxes.device)
     result = torch.concat((result, one_depth.unsqueeze(3)), dim=3)
     return result
+
 
 def rotated_iou(boxes1: torch.tensor, boxes2: torch.tensor):
     # using 3d for 2d for speed and convenience https://pytorch3d.org/docs/iou3d
