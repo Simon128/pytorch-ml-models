@@ -6,8 +6,9 @@ import torch
 import torchvision
 from ..model import OrientedRCNN
 from ..anchor_generation import AnchorGenerator
-from ..losses import rpn_loss
+from ..losses import rpn_loss, get_tp
 import numpy as np
+from ..utils import offsets_to_proposal, midpoint_offset_representation_to_coords
 
 # DETECTRON 2!
 
@@ -24,19 +25,18 @@ if __name__ == "__main__":
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
     x = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
-    x = x.repeat((2, 1, 1, 1))
+    # image = cv2.resize(image, (300, 400))
 
-    for b in ground_truth["boxes"]:
-        x = torch.min(b[:, 0]).to(torch.int).cpu().item() // 2
-        y = torch.min(b[:, 1]).to(torch.int).cpu().item() // 2
-        xmax = torch.max(b[:, 0]).to(torch.int).cpu().item() // 2
-        ymax = torch.max(b[:, 1]).to(torch.int).cpu().item() // 2
-        tl = [x,y] 
-        br = [xmax,ymax] 
-        image = cv2.resize(image, (512, 512))
-        image = cv2.rectangle(image, tl, br, (0, 255, 0), 2)
+    # for b in ground_truth["boxes"]:
+    #     x = torch.min(b[:, 0]).to(torch.int).cpu().item() // 2
+    #     y = torch.min(b[:, 1]).to(torch.int).cpu().item() // 2
+    #     xmax = torch.max(b[:, 0]).to(torch.int).cpu().item() // 2
+    #     ymax = torch.max(b[:, 1]).to(torch.int).cpu().item() // 2
+    #     tl = [x,y] 
+    #     br = [xmax,ymax] 
+    #     image = cv2.rectangle(image, tl, br, (0, 255, 0), 2)
 
-    cv2.imwrite("test.png", image)
+    # cv2.imwrite("test.png", image)
 
     # boxes = []
     # labels = []
@@ -84,16 +84,48 @@ if __name__ == "__main__":
     # ]).unsqueeze(0).unsqueeze(1).unsqueeze(-1).unsqueeze(-1)
     # test = rotated_iou(test_box, gt_box)
 
-    out = model(x.to(device))
     # [8, 8, 8, 8, 8] corresponds to [32, 64, 128, 256, 512] in orig image
-    anchors = anchor_generator.generate_like_fpn(out["backbone_out"], [8, 8, 8, 8, 8])
+    
 
     gt  = ground_truth["boxes"].unsqueeze(0).to(device)
-    gt = gt.repeat((2, 1, 1, 1))
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
-    loss = 0
-    for k, v in out["rpn_out"].items():
-        #sanity = rpn_loss(anchors[k], ground_truth["boxes"], ground_truth["labels"], ground_truth["boxes"]) 
-        loss = rpn_loss(anchors[k], v["anchor_offsets"], v["objectness_scores"], gt)
+    running_loss = 0
 
-    a = 5
+
+    for i in range(1000):
+        model.train(True)
+        optimizer.zero_grad()
+
+        out = model(x.to(device))
+        anchors = anchor_generator.generate_like_fpn(out["backbone_out"], [8, 8, 8, 8, 8])
+
+        loss = 0
+
+        for (k, v), ds in zip(out["rpn_out"].items(), [4, 8, 16, 32, 64]):
+            loss = loss + rpn_loss(anchors[k] / ds, v["anchor_offsets"], v["objectness_scores"], gt / ds)
+
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+        
+        if i % 10 == 0:
+            last_loss = running_loss / 10 # loss every 10 epochs
+            print('  epoch {} loss: {}'.format(i + 1, last_loss))
+            # tb_x = epoch_index * len(training_loader) + i + 1
+            # tb_writer.add_scalar('Loss/train', last_loss, tb_x)6
+            running_loss = 0.
+            offsets = out['rpn_out']['0']['anchor_offsets']
+            b, _ , h, w = offsets.shape
+            tp_anchors, tp_offsets = get_tp(anchors['0'], offsets, gt / 4)
+
+            if len(tp_offsets) > 1:
+                proposals = offsets_to_proposal(tp_anchors, tp_offsets)
+                coords = midpoint_offset_representation_to_coords(proposals)
+                coords = coords.permute((0, 1, 4, 5, 2, 3)).flatten(1, 3)
+                coords = coords * 4
+                #cv2.polylines(image, coords)
+
+
+
+        model.train(False)

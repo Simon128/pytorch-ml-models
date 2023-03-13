@@ -206,7 +206,7 @@ def rotated_iou(boxes1: torch.tensor, boxes2: torch.tensor):
     for idx in range(b):
         # predicted boxes can have comically large coordinates
         # in the beginning of the training, so we increase eps to 0.1
-        _, iou = box3d_overlap(stacked_boxes1[idx], stacked_boxes2[idx], eps=0.01)
+        _, iou = box3d_overlap(stacked_boxes1[idx], stacked_boxes2[idx], eps=0.001)
         result.append(iou)
 
     return torch.stack(result)
