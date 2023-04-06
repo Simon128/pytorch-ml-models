@@ -32,7 +32,7 @@ class OrientedRPN(nn.Module):
         assert isinstance(x, torch.Tensor) and self.fpn_level_num == 1 or isinstance(x, OrderedDict)
 
         if isinstance(x, torch.Tensor):
-            return self.forward_single(x, 0)
+            return self.forward_single(x, '0')
 
         output = OrderedDict()
         for idx, (k, v) in enumerate(x.items()):

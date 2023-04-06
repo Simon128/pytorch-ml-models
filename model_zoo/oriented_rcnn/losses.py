@@ -11,8 +11,8 @@ def gt_coords_to_offsets(boxes: torch.Tensor, anchor_boxes: torch.Tensor):
     y_min = torch.min(boxes[:, :, 1], dim=1)[0]
     y_max = torch.max(boxes[:, :, 1], dim=1)[0]
     # anchor: (ax, ay , aw, ah)
-    x_a = anchor_boxes[:, 0]
-    y_a = anchor_boxes[:, 1]
+    x_a = anchor_boxes[:, 0] + anchor_boxes[:, 2] / 2
+    y_a = anchor_boxes[:, 1] + anchor_boxes[:, 3] / 2
     w_a = anchor_boxes[:, 2]
     h_a = anchor_boxes[:, 3]
 
@@ -23,7 +23,6 @@ def gt_coords_to_offsets(boxes: torch.Tensor, anchor_boxes: torch.Tensor):
     h_g = y_max - y_min
     delta_a_g = x_max - x_g
     delta_b_g = y_max - y_g
-
     t_a = delta_a_g / w_g
     t_b = delta_b_g / h_g
     t_w = torch.log(w_g/ w_a)
@@ -35,29 +34,22 @@ def gt_coords_to_offsets(boxes: torch.Tensor, anchor_boxes: torch.Tensor):
 
 def get_tp(anchors, anchor_offsets, ground_truth_boxes):
     b, _, h, w = anchor_offsets.shape
-    stacked_anchor_offsets = anchor_offsets.reshape(b, -1, 6, h, w).permute((0, 1, 3, 4, 2)).flatten(1, 3)
-    a_x = anchors[:, :, 0, :, :]
-    a_y = anchors[:, :, 1, :, :]
-    a_w = anchors[:, :, 2, :, :]
-    a_h = anchors[:, :, 3, :, :]
-    coords_anchors = torch.stack([
-        torch.stack((a_x, a_y), dim=2),
-        torch.stack((a_x + a_w, a_y), dim=2),
-        torch.stack((a_x + a_w, a_y + a_h), dim=2),
-        torch.stack((a_x, a_y + a_h), dim=2)
-    ], dim=2)
-    iou = rotated_iou(coords_anchors, ground_truth_boxes)
+    anchor_offsets = anchor_offsets.reshape(b, -1, 6, h, w)
+    stacked_anchor_offsets = anchor_offsets.permute((0, 1, 3, 4, 2)).flatten(1, 3)
+    proposals = offsets_to_proposal(anchors, anchor_offsets)
+    coords = midpoint_offset_representation_to_coords(proposals)
+    iou = rotated_iou(coords, ground_truth_boxes)
     tp_mask = (torch.max(iou, dim=2).values > 0.7).nonzero(as_tuple=True)
     max_for_each_gt = torch.max(iou, dim=1)
+    print(torch.mean(max_for_each_gt[0]).item())
     cond_idx = ((max_for_each_gt[0] > 0.3) & (max_for_each_gt[0] < 0.7)).nonzero(as_tuple=True)
     additional_tp = (cond_idx[0], max_for_each_gt[1][cond_idx])
     pred = torch.cat((stacked_anchor_offsets[tp_mask], stacked_anchor_offsets[additional_tp]))
+    anchors = anchors.permute((0,1,3,4,2)).flatten(1,3)
     pos_anchors = torch.cat((anchors[tp_mask], anchors[additional_tp]))
     return pos_anchors, pred
 
-
-
-def rpn_loss(anchors: torch.Tensor, anchor_offsets: torch.Tensor, objectness_score: torch.Tensor, ground_truth_boxes: torch.Tensor, cls_sigmoid: bool = True):
+def rpn_loss(anchors: torch.Tensor, anchor_offsets: torch.Tensor, objectness_score: torch.Tensor, ground_truth_boxes: torch.Tensor, cls_sigmoid: bool = True, verbose = False):
     b, _, h, w = anchor_offsets.shape
     stacked_anchor_offsets = anchor_offsets.reshape(b, -1, 6, h, w).permute((0, 1, 3, 4, 2)).flatten(1, 3)
     # proposals = offsets_to_proposal(anchors, anchor_offsets.reshape(b, -1, 6, h, w))
@@ -108,4 +100,5 @@ def rpn_loss(anchors: torch.Tensor, anchor_offsets: torch.Tensor, objectness_sco
         regr_loss =  1/b * F.smooth_l1_loss(pred, gt_targets)
     else: 
         regr_loss = 0
+
     return cls_loss + regr_loss
