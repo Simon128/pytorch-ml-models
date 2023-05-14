@@ -2,8 +2,6 @@ import torch
 from collections import OrderedDict
 from typing import List
 
-
-
 class AnchorGenerator:
     def __init__(self, cfg: dict, device = torch.device("cpu")) -> None:
         self.num_anchors = cfg.get("num_anchors", 3)
