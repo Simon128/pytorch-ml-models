@@ -37,6 +37,13 @@ class TestRPNEncodings(unittest.TestCase):
         target = torch.tensor([12, 19, 15, 20, 3, 10]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
         out = encodings.rpn_anchor_offset_to_midpoint_offset(prediction, anchor)
         self.assertTrue(torch.allclose(out, target))
+
+    def test_midpoint_offset_to_vertices(self):
+        anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
+        midpoint_offset = torch.tensor([12, 19, 15, 20, 3, 10]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
+        vertices = torch.tensor([[15, 9], [19.5, 29], [9, 29], [4.5, 9]]).view((1, -1, 2, 1, 1)).repeat((1, 4, 1, 1, 1))
+        out = encodings.midpoint_offset_to_vertices(midpoint_offset)
+        self.assertTrue(torch.allclose(out, vertices))
     
 if __name__ == "__main__":
     unittest.main()

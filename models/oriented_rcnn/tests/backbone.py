@@ -7,15 +7,13 @@ class TestBackbone(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # change this, if you want to use your own backbone
-        cls.backbone = resnet_fpn_backbone("resnet50", weights=ResNet50_Weights.DEFAULT, trainable_layers=5)
+        cls.backbone = resnet_fpn_backbone(backbone_name="resnet50", weights=ResNet50_Weights.DEFAULT, trainable_layers=5)
     
     def test_backbone_input(self):
         try:
             # fake image
             x = torch.ones(4, 3, 1024, 1024)
             features = self.backbone(x)
-            for k, v in features.items():
-                print(f"{k}: {v.shape}")
         except Exception as inst:
             self.fail(f"backbone raises an Exception for an input shape of (4, 3, 1024, 1024) [BCHW] \n{inst}")
 

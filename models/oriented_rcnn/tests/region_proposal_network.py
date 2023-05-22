@@ -1,9 +1,8 @@
 import unittest
 import torch
 from collections import OrderedDict
-from torchvision.models.detection.anchor_utils import AnchorGenerator
 
-from ..oriented_rpn import OrientedRPN, decode_rpn_regression_output
+from ..oriented_rpn import OrientedRPN
 
 class TestRPN(unittest.TestCase):
     @classmethod
@@ -41,38 +40,6 @@ class TestRPN(unittest.TestCase):
             self.assertTrue("objectness_scores" in level_out)
             self.assertTupleEqual(level_out["anchor_offsets"].shape, expected_shape_regression)
             self.assertTupleEqual(level_out["objectness_scores"].shape, expected_shape_objectness)
-
-    def test_rpn_loss(self):
-        pass
-
-    def test_rpn_loss_regression(self):
-        pass
-
-    def test_rpn_loss_objectness(self):
-        pass
-
-    def test_rpn_loss_tp(self):
-        pass
-
-    def test_rpn_loss_fp(self):
-        pass
-
-    def test_decode_rpn_regression_output_rotation(self):
-        anchor = torch.Tensor([10, 10, 10, 10]).float()
-        delta_alpha = 0.2 * 10 # rotate by 20% of width
-        delta_beta = 0.5 * 10 # rotate by 50% of height
-        target = torch.Tensor([10, 10, 10, 10, 2, 5]).float()
-
-        anchor = anchor.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-        target = target.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-
-        
-
-    def test_midpoint_offset_to_coordinates(self):
-        pass
-
-    def test_ground_truth_anchor_offset(self):
-        pass
 
 if __name__ == "__main__":
     unittest.main()

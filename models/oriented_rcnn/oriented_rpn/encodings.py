@@ -21,4 +21,23 @@ def rpn_anchor_offset_to_midpoint_offset(prediction: torch.Tensor, anchors: torc
 
 
 def midpoint_offset_to_vertices(midpoint_offset: torch.Tensor):
-    pass
+    b, n, h, w = midpoint_offset.shape
+    num_anchors = int(n/6)
+    # prediction has 6 * num_anchors in dim=1 (they are concatenated) we reshape 
+    # for easier handling 
+    r_midpoint_offset = midpoint_offset.reshape((b, num_anchors, 6, h, w))
+    
+    x = r_midpoint_offset[:, :, 0, :, :]
+    y = r_midpoint_offset[:, :, 1, :, :]
+    w = r_midpoint_offset[:, :, 2, :, :]
+    h = r_midpoint_offset[:, :, 3, :, :]
+    d_alpha = r_midpoint_offset[:, :, 4, :, :]
+    d_beta = r_midpoint_offset[:, :, 5, :, :]
+
+    v1 = torch.stack([x + d_alpha, y - h / 2], dim=2)
+    v2 = torch.stack([x + w / 2, y + d_beta], dim=2)
+    v3 = torch.stack([x - d_alpha, y + h / 2], dim=2)
+    v4 = torch.stack([x - w / 2, y - d_beta], dim=2)
+
+    r_vertices = torch.stack((v1, v2, v3, v4), dim=2)
+    return torch.cat([r_vertices[:, i, :, :, :, :] for i in range(num_anchors)], dim=1).float()
