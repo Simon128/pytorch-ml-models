@@ -14,29 +14,36 @@ class TestRPNEncodings(unittest.TestCase):
         h_factor = 0.5
         prediction = torch.tensor([0, 0, 0, 0, w_factor, h_factor]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         target = torch.tensor([10, 10, 10, 10, 2, 5]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
-        out = encodings.rpn_anchor_offset_to_midpoint_offset(prediction, anchor)
+        out = encodings.anchor_offset_to_midpoint_offset(prediction, anchor)
         self.assertTrue(torch.allclose(out, target))
 
     def test_rpn_anchor_offset_to_midpoint_offset_size(self):
         anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         prediction = torch.tensor([0, 0, np.log(1.5), np.log(2), 0, 0]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         target = torch.tensor([10, 10, 15, 20, 0, 0]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
-        out = encodings.rpn_anchor_offset_to_midpoint_offset(prediction, anchor)
+        out = encodings.anchor_offset_to_midpoint_offset(prediction, anchor)
         self.assertTrue(torch.allclose(out, target))
 
     def test_rpn_anchor_offset_to_midpoint_offset_position(self):
         anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         prediction = torch.tensor([0.2, 0.9, 0, 0, 0, 0]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         target = torch.tensor([12, 19, 10, 10, 0, 0]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
-        out = encodings.rpn_anchor_offset_to_midpoint_offset(prediction, anchor)
+        out = encodings.anchor_offset_to_midpoint_offset(prediction, anchor)
         self.assertTrue(torch.allclose(out, target))
 
     def test_rpn_anchor_offset_to_midpoint_offset_all(self):
         anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         prediction = torch.tensor([0.2, 0.9, np.log(1.5), np.log(2), 0.2, 0.5]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
         target = torch.tensor([12, 19, 15, 20, 3, 10]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
-        out = encodings.rpn_anchor_offset_to_midpoint_offset(prediction, anchor)
+        out = encodings.anchor_offset_to_midpoint_offset(prediction, anchor)
         self.assertTrue(torch.allclose(out, target))
+
+    def test_midpoint_offset_to_anchor_offset(self):
+        anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
+        anchor_offset = torch.tensor([0.2, 0.9, np.log(1.5), np.log(2), 0.2, 0.5]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
+        midpoint_offset = torch.tensor([12, 19, 15, 20, 3, 10]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
+        out = encodings.midpoint_offset_to_anchor_offset(midpoint_offset, anchor)
+        self.assertTrue(torch.allclose(out, anchor_offset.float()))
 
     def test_midpoint_offset_to_vertices(self):
         anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
@@ -44,6 +51,13 @@ class TestRPNEncodings(unittest.TestCase):
         vertices = torch.tensor([[15, 9], [19.5, 29], [9, 29], [4.5, 9]]).view((1, -1, 2, 1, 1)).repeat((1, 4, 1, 1, 1))
         out = encodings.midpoint_offset_to_vertices(midpoint_offset)
         self.assertTrue(torch.allclose(out, vertices))
+
+    def test_vertices_to_midpoint_offset(self):
+        anchor = torch.tensor([10, 10, 10, 10]).view((1, -1, 1, 1)).repeat((1, 4, 1, 1))
+        midpoint_offset = torch.tensor([12, 19, 15, 20, 3, 10]).view((1, -1, 1, 1)).float().repeat((1, 4, 1, 1))
+        vertices = torch.tensor([[15, 9], [19.5, 29], [9, 29], [4.5, 9]]).view((1, -1, 2, 1, 1)).repeat((1, 4, 1, 1, 1))
+        out = encodings.vertices_to_midpoint_offset(vertices)
+        self.assertTrue(torch.allclose(out, midpoint_offset))
     
 if __name__ == "__main__":
     unittest.main()

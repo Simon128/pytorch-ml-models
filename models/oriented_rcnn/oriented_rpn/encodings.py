@@ -20,7 +20,21 @@ def anchor_offset_to_midpoint_offset(anchor_offset: torch.Tensor, anchors: torch
     return torch.cat([r_midpoint_offset[:, i, :, :, :] for i in range(num_anchors)], dim=1).float()
 
 def midpoint_offset_to_anchor_offset(midpoint_offset: torch.tensor, anchors: torch.tensor):
-    pass
+    b, n, h, w = anchors.shape
+    num_anchors = int(n/4)
+    # reshape for easier handling
+    r_midpoint_offset = midpoint_offset.reshape((b, num_anchors, 6, h, w))
+    r_anchors = anchors.reshape((b, num_anchors, 4, h, w))
+
+    d_a = r_midpoint_offset[:, :, 4, :, :] / r_midpoint_offset[:, :, 2, :, :]
+    d_b = r_midpoint_offset[:, :, 5, :, :] / r_midpoint_offset[:, :, 3, :, :]
+    d_w = torch.log(r_midpoint_offset[:, :, 2, :, :] / r_anchors[:, :, 2, :, :])
+    d_h = torch.log(r_midpoint_offset[:, :, 3, :, :] / r_anchors[:, :, 3, :, :])
+    d_x = (r_midpoint_offset[:, :, 0, :, :] - r_anchors[:, :, 0, :, :]) / r_anchors[:, :, 2, :, :]
+    d_y = (r_midpoint_offset[:, :, 1, :, :] - r_anchors[:, :, 1, :, :]) / r_anchors[:, :, 3, :, :]
+
+    r_anchor_offset = torch.stack((d_x, d_y, d_w, d_h, d_a, d_b), dim=2)
+    return torch.cat([r_anchor_offset[:, i, :, :, :] for i in range(num_anchors)], dim=1).float()
 
 def midpoint_offset_to_vertices(midpoint_offset: torch.Tensor):
     b, n, h, w = midpoint_offset.shape
@@ -43,3 +57,26 @@ def midpoint_offset_to_vertices(midpoint_offset: torch.Tensor):
 
     r_vertices = torch.stack((v1, v2, v3, v4), dim=2)
     return torch.cat([r_vertices[:, i, :, :, :, :] for i in range(num_anchors)], dim=1).float()
+
+def vertices_to_midpoint_offset(vertices: torch.Tensor):
+    # vertices shape: b, num_anchors * 4, 2, H, W
+    b, n, _, h, w = vertices.shape
+    num_anchors = int(n/4)
+    # reshape for easier handling
+    r_vertices = vertices.reshape((b, num_anchors, 4, 2, h, w))
+
+    x_min = torch.min(r_vertices[:, :, :, 0, :, :], dim=2)[0]
+    x_max = torch.max(r_vertices[:, :, :, 0, :, :], dim=2)[0]
+    y_min = torch.min(r_vertices[:, :, :, 1, :, :], dim=2)[0]
+    y_max = torch.max(r_vertices[:, :, :, 1, :, :], dim=2)[0]
+    
+    w = x_max - x_min
+    h = y_max - y_min
+    x_center = x_min + w / 2
+    y_center = y_min + h / 2
+    delta_a = r_vertices[:, :, 0, 0, :, :] - x_center
+    delta_b = r_vertices[:, :, 1, 1, :, :] - y_center
+
+    r_midpoint_offset = torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=2)
+    return torch.cat([r_midpoint_offset[:, i, :, :, :] for i in range(num_anchors)], dim=1)
+
