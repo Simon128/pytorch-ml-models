@@ -1,4 +1,4 @@
 from .oriented_rpn import OrientedRPN
-from .encodings import *
-from .anchor_generator import *
+from .anchor_generator import FPNAnchorGenerator
 from .loss import *
+from .utils import *

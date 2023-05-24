@@ -2,7 +2,7 @@ import torch
 from torchvision.ops import box_iou
 import torch.nn.functional as F
 
-from .encodings import vertices_to_midpoint_offset_gt, midpoint_offset_to_anchor_offset_gt
+from ..encodings import vertices_to_midpoint_offset_gt, midpoint_offset_to_anchor_offset_gt
 
 def flatten_anchors(anchors: torch.Tensor):
     b, n, h, w = anchors.shape
@@ -43,47 +43,77 @@ def flatten_objectness(objectness: torch.Tensor):
     b, num_anchors, h, w = objectness.shape
     return objectness.unsqueeze(4).flatten(start_dim=1, end_dim=3)
 
+def get_positives_mask(iou_matrix: torch.Tensor):
+    # iou >= 0.7 -> positive
+    # highest iou for ground truth + 0.3 < iou < 0.7
+    # iou is a MxN matrix: M = num of anchors, N = num of ground truth
+    m, n = iou_matrix.shape
+    above_07 = (iou_matrix > 0.7)
+
+    max_per_gt = torch.max(iou_matrix, dim=0)
+    max_between = iou_matrix[(max_per_gt.indices, torch.arange(n))] > 0.3
+    anchor_idx = max_per_gt.indices[max_between]
+    gt_idx = torch.arange(n).to(iou_matrix.device)[max_between]
+    between = torch.zeros_like(iou_matrix, dtype=torch.int)
+    between[(anchor_idx, gt_idx)] = 1
+
+    positives = above_07 | between
+    return positives == 1
+
+def get_negatives_mask(iou_matrix: torch.Tensor):
+    # iou < 0.3 -> negative
+    # iou is a MxN matrix: M = num of anchors, N = num of ground truth
+    return iou_matrix < 0.3
+
+def get_ignore_mask(positives_mask: tuple[torch.tensor, torch.tensor], negatives_mask: tuple[torch.tensor, torch.tensor]):
+    # ignore anchors -> all not (negative | positive)
+    # ignore gt -> all not (negative | positive)
+    mask = torch.ones_like(positives_mask, dtype=int)
+    mask[positives_mask] = 0
+    mask[negatives_mask] = 0
+    return mask == 1
+
 def rpn_loss(
         regression: torch.Tensor, 
         objectness: torch.Tensor, 
         anchors: torch.Tensor, 
-        ground_truth: list[torch.Tensor]
+        ground_truth: list[torch.Tensor],
+        scale: float = 1.0
     ):
-    flat_regression = flatten_regression(regression)
+    flat_regression = flatten_regression(regression) * scale
     flat_objectness = flatten_objectness(objectness)
-    flat_anchors = flatten_anchors(anchors)
+    flat_anchors = flatten_anchors(anchors) * scale
     num_anchors = len(flat_anchors[0])
 
     losses = []
-    # todo: respect false negatives
 
     for i in range(len(ground_truth)):
         iou = rpn_anchor_iou(flat_anchors[i], ground_truth[i])
-        max_for_each_anchor = torch.max(iou, dim=1)
-        tp_mask = (max_for_each_anchor.values > 0.7).nonzero(as_tuple=True)
-        max_for_each_gt = torch.max(iou, dim=0)
-        cond_idx = ((max_for_each_gt[0] > 0.3) & (max_for_each_gt[0] < 0.7)).nonzero(as_tuple=True)
-        additional_tp = (cond_idx[0], max_for_each_gt[1][cond_idx])
+        positives = get_positives_mask(iou)
+        negatives = get_negatives_mask(iou)
+        ignore = get_ignore_mask(positives, negatives)
+        positives_idx = torch.nonzero(positives, as_tuple=True)
+        negatives_idx = torch.nonzero(negatives, as_tuple=True)
+        ignore_idx = torch.nonzero(ignore, as_tuple=True)
 
         cls_target = torch.zeros_like(flat_objectness[i])
-        cls_target[tp_mask] = 1.0
-        cls_target[additional_tp] = 1.0
-        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target)
+        cls_target[positives_idx[0]] = 1.0
+        weight = torch.ones_like(cls_target)
+        weight[ignore_idx[0]] = 0
+        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight)
 
-        if len(tp_mask[0]) == 0 and len(additional_tp[0]) == 0:
+        if torch.count_nonzero(positives) <= 0:
             losses.append(cls_loss)
             continue
-        elif len(tp_mask[0]) == 0:
-            tp_anchors = flat_anchors[i][additional_tp]
-        elif len(additional_tp[0]) == 0:
-            tp_anchors = flat_anchors[i][tp_mask]
-        else:
-            tp_anchors = torch.cat((flat_anchors[i][tp_mask], flat_anchors[i][additional_tp]), dim=0)
 
-        gt_as_midpoint_offset = vertices_to_midpoint_offset_gt(ground_truth[i])
-        gt_as_anchor_offset = midpoint_offset_to_anchor_offset_gt(gt_as_midpoint_offset, tp_anchors)
-        predictions = torch.cat((flat_regression[i][tp_mask], flat_regression[i][additional_tp]))
-        regr_loss = F.smooth_l1_loss(predictions, gt_as_anchor_offset)
+        print(f"Pos: {torch.count_nonzero(positives)}")
+
+        relevant_gt = ground_truth[i][positives_idx[1]]
+        relevant_pred = flat_regression[i][positives_idx[0]]
+        relevant_anchor = flat_anchors[i][positives_idx[0]]
+        gt_as_midpoint_offset = vertices_to_midpoint_offset_gt(relevant_gt)
+        gt_as_anchor_offset = midpoint_offset_to_anchor_offset_gt(gt_as_midpoint_offset, relevant_anchor)
+        regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset)
         losses.append(cls_loss + regr_loss)
 
-    return torch.mean(torch.tensor(losses))
+    return torch.mean(torch.stack(losses))

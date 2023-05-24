@@ -40,5 +40,55 @@ class TestRPNLoss(unittest.TestCase):
         expected = F.binary_cross_entropy(torch.tensor(0.5), torch.tensor(1.0))
         self.assertEqual(_loss, expected)
 
+    def test_positives_mask(self):
+        iou = torch.tensor([
+            [0.1, 0.2, 0.5, 0.2, 0.8],
+            [0, 0.9, 0, 0, 0.4],
+            [0.4, 0, 0.35, 0, 0],
+            [0, 0, 0, 0, 0.35]
+            ])
+        target = torch.tensor([
+            [False, False, True, False, True],
+            [False, True, False, False, False],
+            [True, False, False, False, False],
+            [False, False, False, False, False]
+            ])
+        pred = loss.get_positives_mask(iou)
+        self.assertEqual(torch.count_nonzero(pred==target), iou.shape[0] * iou.shape[1])
+
+    def test_negatives_mask(self):
+        iou = torch.tensor([
+            [0.1, 0.2, 0.5, 0.2, 0.8],
+            [0, 0.9, 0, 0, 0.4],
+            [0.4, 0, 0.35, 0, 0],
+            [0, 0, 0, 0, 0.35]
+            ])
+        target = torch.tensor([
+            [False, False, True, False, True],
+            [False, True, False, False, True],
+            [True, False, True, False, False],
+            [False, False, False, False, True]
+            ]) == False
+        pred = loss.get_negatives_mask(iou)
+        self.assertEqual(torch.count_nonzero(pred==target), iou.shape[0] * iou.shape[1])
+
+    def test_ignore_mask(self):
+        iou = torch.tensor([
+            [0.1, 0.2, 0.5, 0.2, 0.8],
+            [0, 0.9, 0, 0, 0.4],
+            [0.4, 0, 0.35, 0, 0],
+            [0, 0, 0, 0, 0.35]
+            ])
+        target = torch.tensor([
+            [False, False, False, False, False],
+            [False, False, False, False, True],
+            [False, False, True, False, False],
+            [False, False, False, False, True]
+            ])
+        pos_mask = loss.get_positives_mask(iou)
+        neg_mask = loss.get_negatives_mask(iou)
+        pred = loss.get_ignore_mask(pos_mask, neg_mask)
+        self.assertEqual(torch.count_nonzero(pred==target), iou.shape[0] * iou.shape[1])
+
 if __name__ == "__main__":
     unittest.main()

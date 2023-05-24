@@ -1,22 +1,10 @@
 import torch
 import torch.nn as nn
 from collections import OrderedDict
-from torchvision.models.detection.anchor_utils import AnchorGenerator
-
-ANCHOR_DEFAULT_SIZES = ((32, 64, 128, 256, 512))
-ANCHOR_DEFAULT_ASPECT_RATIOS = ((0.5, 1.0, 2.0))
 
 class OrientedRPN(nn.Module):
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict = {}):
         super().__init__()
-        self.anchor_generator_cfg = cfg.get("anchor_generator", {
-            "sizes": ANCHOR_DEFAULT_SIZES,
-            "aspect_ratios": ANCHOR_DEFAULT_ASPECT_RATIOS
-        })
-        self.anchor_generator = AnchorGenerator(
-            sizes = self.anchor_generator_cfg.get("sizes", ANCHOR_DEFAULT_SIZES),
-            aspect_ratios = self.anchor_generator_cfg.get("aspect_ratios", ANCHOR_DEFAULT_ASPECT_RATIOS)
-        )
         self.fpn_level_num = cfg.get("fpn_level_num", 5)
         self.fpn_channels = cfg.get("fpn_channels", 256)
         self.num_anchors = cfg.get("num_anchors", 3)

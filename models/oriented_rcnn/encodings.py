@@ -44,7 +44,7 @@ def midpoint_offset_to_anchor_offset_gt(midpoint_offset_gt: torch.tensor, tp_anc
     d_h = torch.log(midpoint_offset_gt[:, 3] / tp_anchors[:, 3])
     d_x = (midpoint_offset_gt[:, 0] - tp_anchors[:, 0]) / tp_anchors[:, 2]
     d_y = (midpoint_offset_gt[:, 1] - tp_anchors[:, 1]) / tp_anchors[:, 3]
-    return torch.stack((d_x, d_y, d_w, d_h, d_a.repeat(num_anchors), d_b.repeat(num_anchors)), dim=1)
+    return torch.stack((d_x, d_y, d_w, d_h, d_a, d_b), dim=1)
 
 def midpoint_offset_to_vertices(midpoint_offset: torch.Tensor):
     b, n, h, w = midpoint_offset.shape

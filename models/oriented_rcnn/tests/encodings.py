@@ -1,7 +1,7 @@
 import unittest
 import torch
 import numpy as np
-from ..oriented_rpn import encodings
+from .. import encodings
 
 class TestRPNEncodings(unittest.TestCase):
     @classmethod

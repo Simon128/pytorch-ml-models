@@ -11,7 +11,7 @@
       "env": {
         "CUDA_LAUNCH_BLOCKING": "1"
       },
-      "module": "model_zoo.oriented_rcnn.test.run",
+      "module": "models.oriented_rcnn.example.overfit",
       "justMyCode": true
     }
   ]
