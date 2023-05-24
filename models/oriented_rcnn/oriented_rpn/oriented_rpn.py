@@ -1,12 +1,9 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 from collections import OrderedDict
 
 class OrientedRPN(nn.Module):
-    '''
-        Implementation following https://arxiv.org/abs/2108.05699
-    '''
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict = {}):
         super().__init__()
         self.fpn_level_num = cfg.get("fpn_level_num", 5)
         self.fpn_channels = cfg.get("fpn_channels", 256)
@@ -29,10 +26,7 @@ class OrientedRPN(nn.Module):
         return {"anchor_offsets": anchor_offsets, "objectness_scores": objectness_scores}
 
     def forward(self, x):
-        assert isinstance(x, torch.Tensor) and self.fpn_level_num == 1 or isinstance(x, OrderedDict)
-
-        if isinstance(x, torch.Tensor):
-            return self.forward_single(x, 0)
+        assert isinstance(x, OrderedDict)
 
         output = OrderedDict()
         for idx, (k, v) in enumerate(x.items()):
