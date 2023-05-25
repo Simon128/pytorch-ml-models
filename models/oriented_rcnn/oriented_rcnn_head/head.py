@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from mmcv.ops import RoIAlignRotated
 from collections import OrderedDict
 
 # todo:

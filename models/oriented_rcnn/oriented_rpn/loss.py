@@ -100,20 +100,22 @@ def rpn_loss(
         cls_target[positives_idx[0]] = 1.0
         weight = torch.ones_like(cls_target)
         weight[ignore_idx[0]] = 0
-        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight)
+        if len(positives_idx[0]) > 0 and False:
+            weight[positives_idx[0]] = len(negatives_idx[0]) / len(positives_idx[0])
+        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight, reduction='sum')
 
         if torch.count_nonzero(positives) <= 0:
             losses.append(cls_loss)
             continue
 
-        print(f"Pos: {torch.count_nonzero(positives)}")
+        #print(f"Pos: {torch.count_nonzero(positives)}")
 
         relevant_gt = ground_truth[i][positives_idx[1]]
         relevant_pred = flat_regression[i][positives_idx[0]]
         relevant_anchor = flat_anchors[i][positives_idx[0]]
         gt_as_midpoint_offset = vertices_to_midpoint_offset_gt(relevant_gt)
         gt_as_anchor_offset = midpoint_offset_to_anchor_offset_gt(gt_as_midpoint_offset, relevant_anchor)
-        regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset)
+        regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset, reduction='sum')
         losses.append(cls_loss + regr_loss)
 
     return torch.mean(torch.stack(losses))
