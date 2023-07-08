@@ -108,8 +108,6 @@ def rpn_loss(
             losses.append(cls_loss)
             continue
 
-        #print(f"Pos: {torch.count_nonzero(positives)}")
-
         relevant_gt = ground_truth[i][positives_idx[1]]
         relevant_pred = flat_regression[i][positives_idx[0]]
         relevant_anchor = flat_anchors[i][positives_idx[0]]

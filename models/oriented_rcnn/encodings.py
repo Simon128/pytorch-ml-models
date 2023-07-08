@@ -99,11 +99,15 @@ def vertices_to_midpoint_offset_gt(vertices: torch.Tensor):
     y_min = torch.min(vertices[:, :, 1], dim=1)[0]
     y_max = torch.max(vertices[:, :, 1], dim=1)[0]
     
+    # assuming clockwise 
+    # (argmin returns first idx)
+    top_left_idx = (torch.arange(n), torch.argmin(vertices[:, :, 1], dim=1))
+    cl_next_idx = (top_left_idx[0], (top_left_idx[1] + 1) % 4)
     w = x_max - x_min
     h = y_max - y_min
     x_center = x_min + w / 2
     y_center = y_min + h / 2
-    delta_a = vertices[:, 0, 0] - x_center
-    delta_b = vertices[:, 1, 1] - y_center
+    delta_a = vertices[top_left_idx][:, 0] - x_center
+    delta_b = vertices[cl_next_idx][:, 1] - y_center
 
     return torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=1)
