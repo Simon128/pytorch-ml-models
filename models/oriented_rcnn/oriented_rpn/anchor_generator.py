@@ -27,13 +27,13 @@ class FPNAnchorGenerator:
 
         return torch.cat(anchors, dim=1)
 
-    def generate_like_fpn(self, x: OrderedDict, image_width: int, image_height: int):
+    def generate_like_fpn(self, x: OrderedDict, image_width: int, image_height: int, device = "cpu"):
         assert len(x.values()) == len(self.sqrt_size_per_level), \
             "number of FPN levels and number of size per level does not fit"
 
         result = OrderedDict()
 
         for (level_key, level_value), sqrt_size in zip(x.items(), self.sqrt_size_per_level):
-            result[level_key] = self.generate_single(level_value, sqrt_size, image_width, image_height)
+            result[level_key] = self.generate_single(level_value, sqrt_size, image_width, image_height).to(device)
 
         return result

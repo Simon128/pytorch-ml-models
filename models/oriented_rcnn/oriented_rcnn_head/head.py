@@ -25,7 +25,7 @@ class OrientedRCNNHead(nn.Module):
         test = 5
         return None
 
-    def forward(proposals: OrderedDict, fpn_feat: OrderedDict):
+    def forward(self, proposals: OrderedDict, fpn_feat: OrderedDict):
         x = []
 
         for p, feat in zip(proposal.values(), fpn_feat.values()):

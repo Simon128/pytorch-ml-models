@@ -51,7 +51,7 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
         v4_new = torch.where(diag1_len > diag2_len, new_v4, v4)
 
         r_rectangular = torch.stack((v1_new, v2_new, v3_new, v4_new), dim=2)
-        return r_rectangular.cat([r_rectangular[:, i, :, :, :, :] for i in range(num_rois)])
+        return torch.cat([r_rectangular[:, i, :, :, :, :] for i in range(num_rois)])
 
     def rectangular_vertices_to_5_param(self, rect_v: torch.Tensor):
         # transform rectangular vertices to (x, y, w, h, theta)
@@ -60,13 +60,13 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
         b, n, _, h, w = rect_v.shape
         num_rois = int(n/4)
         r_rect = rect_v.reshape((b, num_rois, 4, 2, h, w))
-        min_y_vals, min_y_idx = torch.min(rect_v[:, :, :, 1, :, :], dim=2)
+        # clockwise assumption
+        # (first min_y will be the left one if there are two)
+        min_y_idx = torch.argmin(rect_v[:, :, :, 1, :, :], dim=2)
         # for the reference vector, we need the correct neighbouring vertex 
         # which is the one with largest x coord
         max_x_vals, max_x_idx = torch.max(rect_v[:, :, :, 0, :, :], dim=2)
         ref_vector = rect_v[:, :, max_x_idx] - rect_v[:, :, min_y_idx, :, :, :]
-
-
 
         # angle between two vectors: cos(theta) = (a * b) / (|a| + |b|)
         # todo: 1. find reference vertex (https://github.com/open-mmlab/mmrotate/blob/main/docs/en/intro.md)
@@ -85,17 +85,19 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
             vertices = midpoint_offset_to_vertices(midpoint)
             result[k] = vertices
 
-        # parallelogram to rectangular proposals
+        # parallelogram to rectangular proposals to cv2_format (center_x, center_y, width, height, theta (rad))
         for k, v in result.items():
             rect_vertices = self.parallelogram_vertices_to_rectangular_vertices(v)
+            cv2_format = self.rectangular_vertices_to_5_param(rect_vertices)
+            result[k] = cv2_format
 
         return result
 
     def forward(self, fpn_features: OrderedDict, rpn_proposals: OrderedDict, anchors: OrderedDict):
-        rectangular_vertices = self.process_rpn_proposals(rpn_proposals, anchors)
+        cv2_format = self.process_rpn_proposals(rpn_proposals, anchors)
         result = OrderedDict()
 
-        for k in rectangular_vertices.keys():
-            result[k] = super().forward(fpn_features[k], rectangular_vertices[k])
+        for k in cv2_format.keys():
+            result[k] = super().forward(fpn_features[k], cv2_format[k])
 
         return result
