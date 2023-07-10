@@ -4,6 +4,23 @@ import torch.nn.functional as F
 
 from ..encodings import vertices_to_midpoint_offset_gt, midpoint_offset_to_anchor_offset_gt
 
+def random_sample(positives_idx: torch.Tensor, negatives_idx: torch.Tensor, num: int):
+    num_samples_positive = min(num // 2, len(positives_idx))
+    num_samples_negative = min(num // 2 + (num // 2 - num_samples_positive), len(negatives_idx))
+    pos_p = torch.ones_like(positives_idx) / len(positives_idx)
+    neg_p = torch.ones_like(negatives_idx) / len(negatives_idx)
+
+    if num_samples_positive > 0:
+        positive_samples = pos_p.multinomial(num_samples=num_samples_positive)
+    else:
+        positive_samples = torch.Tensor([]).to(torch.int64)
+    if num_samples_negative > 0:
+        negative_samples = neg_p.multinomial(num_samples=num_samples_negative)
+    else:
+        negative_samples = torch.Tensor([]).to(torch.int64)
+
+    return positive_samples, negative_samples
+
 def flatten_anchors(anchors: torch.Tensor):
     b, n, h, w = anchors.shape
     num_anchors = int(n/4)
@@ -91,18 +108,19 @@ def rpn_loss(
         iou = rpn_anchor_iou(flat_anchors[i], ground_truth[i])
         positives = get_positives_mask(iou)
         negatives = get_negatives_mask(iou)
-        ignore = get_ignore_mask(positives, negatives)
         positives_idx = torch.nonzero(positives, as_tuple=True)
         negatives_idx = torch.nonzero(negatives, as_tuple=True)
-        ignore_idx = torch.nonzero(ignore, as_tuple=True)
+        positive_samples, negative_samples = random_sample(positives_idx[0], negatives_idx[0], 256)
+        positives_idx = (positives_idx[0][positive_samples], positives_idx[1][positive_samples])
+        negatives_idx = (negatives_idx[0][negative_samples], negatives_idx[1][negative_samples])
 
         cls_target = torch.zeros_like(flat_objectness[i])
         cls_target[positives_idx[0]] = 1.0
-        weight = torch.ones_like(cls_target)
-        weight[ignore_idx[0]] = 0
-        if len(positives_idx[0]) > 0 and False:
-            weight[positives_idx[0]] = len(negatives_idx[0]) / len(positives_idx[0])
-        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight, reduction='sum')
+        weight = torch.zeros_like(cls_target)
+        weight[positives_idx[0]] = 1
+        weight[negatives_idx[0]] = 1
+
+        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight, reduction='mean')
 
         if torch.count_nonzero(positives) <= 0:
             losses.append(cls_loss)
@@ -113,7 +131,7 @@ def rpn_loss(
         relevant_anchor = flat_anchors[i][positives_idx[0]]
         gt_as_midpoint_offset = vertices_to_midpoint_offset_gt(relevant_gt)
         gt_as_anchor_offset = midpoint_offset_to_anchor_offset_gt(gt_as_midpoint_offset, relevant_anchor)
-        regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset, reduction='sum')
+        regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset, reduction='mean')
         losses.append(cls_loss + regr_loss)
 
     return torch.mean(torch.stack(losses))
