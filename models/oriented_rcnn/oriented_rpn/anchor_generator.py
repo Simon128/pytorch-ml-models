@@ -21,8 +21,8 @@ class FPNAnchorGenerator:
             height = ar_height_factor * sqrt_size / feature_height_factor
             anchor_width = torch.full((b, h, w), width)
             anchor_height = torch.full((b, h, w), height)
-            anchor_x = torch.arange(w).repeat((b, h, 1))
-            anchor_y = torch.arange(h).repeat((b, w, 1)).permute((0, 2, 1))
+            anchor_x = torch.arange(w).repeat((b, h, 1)) + 0.5
+            anchor_y = torch.arange(h).repeat((b, w, 1)).permute((0, 2, 1)) + 0.5
             anchors.append(torch.stack((anchor_x, anchor_y, anchor_width, anchor_height), dim=1))
 
         return torch.cat(anchors, dim=1)

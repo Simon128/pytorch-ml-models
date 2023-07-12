@@ -102,7 +102,9 @@ def rpn_loss(
     flat_anchors = flatten_anchors(anchors) * scale
     num_anchors = len(flat_anchors[0])
 
-    losses = []
+    cls_losses = []
+    regr_losses = []
+    true_positives = []
 
     for i in range(len(ground_truth)):
         iou = rpn_anchor_iou(flat_anchors[i], ground_truth[i])
@@ -121,9 +123,10 @@ def rpn_loss(
         weight[negatives_idx[0]] = 1
 
         cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight, reduction='mean')
+        cls_losses.append(cls_loss)
+        true_positives.append(torch.tensor(float(len(positives_idx[0]))).to(anchors.device))
 
         if torch.count_nonzero(positives) <= 0:
-            losses.append(cls_loss)
             continue
 
         relevant_gt = ground_truth[i][positives_idx[1]]
@@ -132,6 +135,10 @@ def rpn_loss(
         gt_as_midpoint_offset = vertices_to_midpoint_offset_gt(relevant_gt)
         gt_as_anchor_offset = midpoint_offset_to_anchor_offset_gt(gt_as_midpoint_offset, relevant_anchor)
         regr_loss = F.smooth_l1_loss(relevant_pred, gt_as_anchor_offset, reduction='mean')
-        losses.append(cls_loss + regr_loss)
+        regr_losses.append(regr_loss)
 
-    return torch.mean(torch.stack(losses))
+    regression_loss = torch.mean(torch.stack(regr_losses)) if len(regr_losses) > 0 else torch.tensor(0).to(anchors.device)
+    classification_loss = torch.mean(torch.stack(cls_losses))
+    true_positives = torch.mean(torch.stack(true_positives))
+    loss = classification_loss + regression_loss 
+    return {"loss": loss, "regression_loss": regression_loss, "classification_loss": classification_loss, "TP": true_positives}

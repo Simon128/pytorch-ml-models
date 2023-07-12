@@ -36,6 +36,23 @@ def pred_to_vertices_by_gt(anchors: torch.Tensor, ground_truth: torch.Tensor, re
     anchors_vertices = torch.stack((a_1, a_2, a_3, a_4), dim=1)
     return relevant_gt, pred_vertices, anchors_vertices
 
+def get_image_anchors(anchors: torch.Tensor, scale: float):
+    anchors_vertices = (flatten_anchors(anchors.unsqueeze(0)) * scale)[0]
+
+    if len(anchors_vertices.shape) == 1:
+        anchors_vertices = anchors_vertices.unsqueeze(0)
+
+    anchors_x_min = anchors_vertices[:, 0] - anchors_vertices[:, 2] / 2
+    anchors_y_min = anchors_vertices[:, 1] - anchors_vertices[:, 3] / 2
+    anchors_x_max = anchors_vertices[:, 0] + anchors_vertices[:, 2] / 2
+    anchors_y_max = anchors_vertices[:, 1] + anchors_vertices[:, 3] / 2
+    a_1 = torch.stack((anchors_x_min, anchors_y_min), dim=1)
+    a_2 = torch.stack((anchors_x_max, anchors_y_min), dim=1)
+    a_3 = torch.stack((anchors_x_max, anchors_y_max), dim=1)
+    a_4 = torch.stack((anchors_x_min, anchors_y_max), dim=1)
+    anchors_vertices = torch.stack((a_1, a_2, a_3, a_4), dim=1)
+    return anchors_vertices
+
 def topk_pred_to_vertices(anchors: torch.Tensor, ground_truth: torch.Tensor, regression: torch.Tensor, scale: float, objectness: torch.Tensor, k=50, cutoff = 0.5):
     flat_regression = flatten_regression(regression.unsqueeze(0)) * scale
     flat_anchors = flatten_anchors(anchors.unsqueeze(0)) * scale
