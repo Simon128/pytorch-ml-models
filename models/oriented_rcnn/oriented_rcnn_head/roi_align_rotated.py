@@ -5,7 +5,8 @@ from collections import OrderedDict
 from ..encodings import anchor_offset_to_midpoint_offset, midpoint_offset_to_vertices
 
 class RoIAlignRotatedWrapper(RoIAlignRotated):
-    def __init__(self, output_size, spatial_scale, sampling_ratio: int):
+    def __init__(self, output_size, spatial_scale, sampling_ratio: int, fpn_level_scalings = [4, 8, 16, 32, 64]):
+        self.fpn_level_scalings = fpn_level_scalings
         super().__init__(output_size, spatial_scale, sampling_ratio=sampling_ratio)
 
     def parallelogram_vertices_to_rectangular_vertices(self, parallelogram: torch.Tensor):
@@ -104,6 +105,8 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
             rect_vertices = self.parallelogram_vertices_to_rectangular_vertices(v)
             cv2_format, hbb = self.rectangular_vertices_to_5_param_and_hbb(rect_vertices)
             batch_indexed = []
+            vertices = []
+            level_scores = []
 
             for b_idx in range(b):
                 # take the top 2000 rpn proposals and apply nms
@@ -114,20 +117,64 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
                 nms_result = nms(hbb[b_idx][topk_idx], topk_scores, 0.5)
                 keep = nms_result[1]
                 kept_boxes = cv2_format[b_idx, keep]
+                kept_vertices = rect_vertices[b_idx, keep]
+                vertices.append(kept_vertices)
+                kept_scores = topk_scores[keep]
                 n = kept_boxes.shape[0]
                 b_idx_tensor = torch.full((n, 1), b_idx).to(rect_vertices.device)
                 values = torch.concatenate((b_idx_tensor, kept_boxes), dim=-1)
                 batch_indexed.append(values)
+                level_scores.append(kept_scores)
 
-            result[k] = torch.concatenate(batch_indexed, dim=0)
+            result[k] = {}
+            result[k]["boxes"] = torch.concatenate(batch_indexed, dim=0)
+            result[k]["scores"] = torch.stack(level_scores, dim=0)
+            result[k]["vertices"] = torch.stack(vertices, dim=0)
 
         return result
 
     def forward(self, fpn_features: OrderedDict, rpn_proposals: OrderedDict, anchors: OrderedDict):
+        # this is doing the roi align rotated + the filtering described in the section 3.3 of the paper
         cv2_format = self.process_rpn_proposals(rpn_proposals, anchors)
-        result = OrderedDict()
+        merged_features = []
+        merged_boxes = []
+        merged_scores = []
+        merged_vertices = []
 
-        for k in cv2_format.keys():
-            result[k] = super().forward(fpn_features[k], cv2_format[k])
+        for s_idx, k in enumerate(cv2_format.keys()):
+            num_batches = fpn_features[k].shape[0]
+            roi_align = super().forward(fpn_features[k], cv2_format[k]["boxes"])
+            # todo: find a better way
+            batched_roi_align = {b: [] for b in range(num_batches)}
+            batched_boxes = {b: [] for b in range(num_batches)}
+            for idx, batch_idx in enumerate(cv2_format[k]["boxes"][:, 0]):
+                batched_roi_align[int(batch_idx.item())].append(roi_align[idx])
+                batched_boxes[int(batch_idx.item())].append(cv2_format[k]["boxes"][idx])
+            merged_features.append(torch.stack([torch.stack(bra, dim=0) for bra in batched_roi_align.values()], dim=0))
+            merged_boxes.append(torch.stack([torch.stack(bb, dim=0) for bb in batched_boxes.values()], dim=0) * self.fpn_level_scalings[s_idx])
+            merged_scores.append(cv2_format[k]["scores"])
+            merged_vertices.append(cv2_format[k]["vertices"])
 
-        return result
+        merged_features = torch.concatenate(merged_features, dim=1)
+        merged_boxes = torch.concatenate(merged_boxes, dim=1)
+        merged_scores = torch.concatenate(merged_scores, dim=1)
+        merged_vertices = torch.concatenate(merged_vertices, dim=1)
+
+        filtered_features = []
+        filtered_boxes = []
+        filtered_scores = []
+        filtered_vertices = []
+        num_batches = merged_features.shape[0]
+        for b in range(num_batches):
+            keep = torch.topk(merged_scores[b], k=1000).indices
+            filtered_features.append(merged_features[b, keep])
+            filtered_boxes.append(merged_boxes[b, keep])
+            filtered_scores.append(merged_scores[b, keep])
+            filtered_vertices.append(merged_vertices[b, keep])
+
+        return {
+            "features": torch.stack(filtered_features, dim=0), 
+            "boxes": torch.stack(filtered_boxes, dim=0), 
+            "scores": torch.stack(filtered_scores, dim=0),
+            "vertices": torch.stack(filtered_vertices, dim=0)
+        }

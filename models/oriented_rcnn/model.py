@@ -11,8 +11,8 @@ class OrientedRCNN(nn.Module):
     def __init__(self, backbone: nn.Module, cfg: dict = {}) -> None:
         super().__init__()
         self.backbone = backbone
-        self.oriented_rpn = OrientedRPN(cfg)
-        self.head = OrientedRCNNHead(cfg)
+        self.oriented_rpn = OrientedRPN(cfg.get("rpn", {}))
+        self.head = OrientedRCNNHead(cfg.get("head", {}))
         self.anchor_generator = FPNAnchorGenerator(
             sqrt_size_per_level=(32, 64, 128, 256, 512)
         )
