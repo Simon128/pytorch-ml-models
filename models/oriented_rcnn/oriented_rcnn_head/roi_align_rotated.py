@@ -7,7 +7,7 @@ from ..encodings import anchor_offset_to_midpoint_offset, midpoint_offset_to_ver
 class RoIAlignRotatedWrapper(RoIAlignRotated):
     def __init__(self, output_size, spatial_scale, sampling_ratio: int, fpn_level_scalings = [4, 8, 16, 32, 64]):
         self.fpn_level_scalings = fpn_level_scalings
-        super().__init__(output_size, spatial_scale, sampling_ratio=sampling_ratio)
+        super().__init__(output_size, spatial_scale, sampling_ratio=sampling_ratio, clockwise=True)
 
     def parallelogram_vertices_to_rectangular_vertices(self, parallelogram: torch.Tensor):
         # we get the vectors of both diagonales,
@@ -117,7 +117,10 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
                 nms_result = nms(hbb[b_idx][topk_idx], topk_scores, 0.5)
                 keep = nms_result[1]
                 kept_boxes = cv2_format[b_idx, keep]
-                kept_vertices = rect_vertices[b_idx, keep]
+                b, _, _, h, w = rect_vertices.shape
+                flat_vertices = rect_vertices.reshape((b, -1, 4, 2, h, w))
+                flat_vertices = torch.movedim(flat_vertices, (2, 3), (4, 5)).reshape(b, -1, 4, 2)
+                kept_vertices = flat_vertices[b_idx, keep]
                 vertices.append(kept_vertices)
                 kept_scores = topk_scores[keep]
                 n = kept_boxes.shape[0]

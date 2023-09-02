@@ -20,12 +20,11 @@ if __name__ == "__main__":
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
     x = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
-    x = x.repeat((2, 1, 1, 1))
     backbone = resnet_fpn_backbone('resnet18', pretrained=False, norm_layer=None, trainable_layers=5).to(device)
     backbone.train()
     model = OrientedRCNN(backbone, {}).to(device)
 
-    gt = ground_truth["boxes"].unsqueeze(0).to(device).repeat((2, 1, 1, 1))
+    gt = ground_truth["boxes"].unsqueeze(0).to(device)
     optimizer = torch.optim.Adam([
         {"params": model.parameters()}
         ], lr=0.0001)
@@ -56,7 +55,7 @@ if __name__ == "__main__":
                 loss_dict.setdefault(k, [])
                 loss_dict[k].append(v)
 
-        loss = sum([torch.stack(v).mean() for v in loss_dict.values()])
+        loss = torch.stack(loss_dict["loss"]).sum()
         loss.backward()
         optimizer.step()
         running_loss += loss.item()

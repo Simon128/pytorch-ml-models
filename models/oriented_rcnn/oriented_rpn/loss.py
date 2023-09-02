@@ -141,4 +141,4 @@ def rpn_loss(
     classification_loss = torch.mean(torch.stack(cls_losses))
     true_positives = torch.mean(torch.stack(true_positives))
     loss = classification_loss + regression_loss 
-    return {"loss": loss, "regression_loss": regression_loss, "classification_loss": classification_loss, "TP": true_positives}
+    return {"loss": loss, "regression_loss": regression_loss, "classification_loss": classification_loss}

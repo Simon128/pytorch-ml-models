@@ -16,16 +16,16 @@ class OrientedRCNNHead(nn.Module):
         channels = cfg.get("channels", 256)
         self.num_classes = cfg.get("num_classes", 10)
         roi_align_size = cfg.get("roi_align_size", (7,7))
-        roi_align_sampling_ratio = cfg.get("roi_align_sampling_ratio", 0)
+        roi_align_sampling_ratio = cfg.get("roi_align_sampling_ratio", 2)
 
         self.roi_align_rotated = RoIAlignRotatedWrapper(
-                roi_align_size, 
-                spatial_scale = 1, 
-                sampling_ratio = roi_align_sampling_ratio
+            roi_align_size, 
+            spatial_scale = 1, 
+            sampling_ratio = roi_align_sampling_ratio
         )
         num_features = channels * roi_align_size[0] * roi_align_size[1]
         self.fc = nn.Sequential(
-            nn.Flatten(),
+            nn.Flatten(start_dim=2),
             nn.Linear(num_features, num_features),
             nn.ReLU(),
             nn.Linear(num_features, num_features),
@@ -38,7 +38,7 @@ class OrientedRCNNHead(nn.Module):
 
     def forward(self, proposals: OrderedDict, fpn_feat: OrderedDict, anchors: OrderedDict):
         x = self.roi_align_rotated(fpn_feat, proposals, anchors)
-        batch_size = x.shape[0]
+        batch_size = x['features'].shape[0]
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
