@@ -13,7 +13,9 @@ class OrientedRCNNHead(nn.Module):
         if cfg is None:
             cfg = {}
 
-        channels = cfg.get("channels", 256)
+        in_channels = cfg.get("in_channels", 256)
+        fpn_level_scalings = cfg.get("fpn_level_scalings", [4, 8, 16, 32, 64])
+        out_channels = cfg.get("out_channels", 1024)
         self.num_classes = cfg.get("num_classes", 10)
         roi_align_size = cfg.get("roi_align_size", (7,7))
         roi_align_sampling_ratio = cfg.get("roi_align_sampling_ratio", 2)
@@ -21,19 +23,22 @@ class OrientedRCNNHead(nn.Module):
         self.roi_align_rotated = RoIAlignRotatedWrapper(
             roi_align_size, 
             spatial_scale = 1, 
-            sampling_ratio = roi_align_sampling_ratio
+            sampling_ratio = roi_align_sampling_ratio,
+            fpn_level_scalings=fpn_level_scalings
         )
-        num_features = channels * roi_align_size[0] * roi_align_size[1]
         self.fc = nn.Sequential(
             nn.Flatten(start_dim=2),
-            nn.Linear(num_features, num_features),
+            nn.Linear(in_channels * roi_align_size[0] * roi_align_size[1], out_channels),
             nn.ReLU(),
-            nn.Linear(num_features, num_features),
+            nn.Linear(out_channels, out_channels),
             nn.ReLU()
         )
-        self.classification = nn.Linear(num_features, self.num_classes)
+        # +1 for background class
+        self.classification = nn.Linear(out_channels, self.num_classes + 1)
+        # note: we predict x, y, w, h, theta instead of the midpoint offset thingy
+        # as shown in figure 2 of the paper
         self.regression = nn.Sequential(
-            nn.Linear(num_features, 6 * self.num_classes)
+            nn.Linear(out_channels, 5)
         )
 
     def forward(self, proposals: OrderedDict, fpn_feat: OrderedDict, anchors: OrderedDict):
@@ -42,11 +47,10 @@ class OrientedRCNNHead(nn.Module):
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
-        regression = regression.reshape((batch_size, self.num_classes, -1))
+        regression = regression.reshape((batch_size, -1, 5))
         return {
             "classification": classification,
             "regression": regression,
             "filtered_rpn_boxes": x["boxes"],
-            "filtered_rpn_scores": x["scores"],
-            "filtered_rpn_vertices": x["vertices"]
+            "filtered_rpn_scores": x["scores"]
         }

@@ -118,11 +118,12 @@ def rpn_loss(
 
         cls_target = torch.zeros_like(flat_objectness[i])
         cls_target[positives_idx[0]] = 1.0
-        weight = torch.zeros_like(cls_target)
-        weight[positives_idx[0]] = 1
-        weight[negatives_idx[0]] = 1
+        mask = torch.zeros_like(cls_target)
+        mask[positives_idx[0]] = 1
+        mask[negatives_idx[0]] = 1
+        mask = (mask == 1)
 
-        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i], cls_target, weight=weight, reduction='mean')
+        cls_loss = F.binary_cross_entropy_with_logits(flat_objectness[i][mask], cls_target[mask], reduction='mean')
         cls_losses.append(cls_loss)
         true_positives.append(torch.tensor(float(len(positives_idx[0]))).to(anchors.device))
 

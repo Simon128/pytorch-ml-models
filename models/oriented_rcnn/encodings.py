@@ -99,15 +99,37 @@ def vertices_to_midpoint_offset_gt(vertices: torch.Tensor):
     y_min = torch.min(vertices[:, :, 1], dim=1)[0]
     y_max = torch.max(vertices[:, :, 1], dim=1)[0]
     
-    # assuming clockwise 
-    # (argmin returns first idx)
-    top_left_idx = (torch.arange(n), torch.argmin(vertices[:, :, 1], dim=1))
-    cl_next_idx = (top_left_idx[0], (top_left_idx[1] + 1) % 4)
     w = x_max - x_min
     h = y_max - y_min
     x_center = x_min + w / 2
     y_center = y_min + h / 2
-    delta_a = vertices[top_left_idx][:, 0] - x_center
-    delta_b = vertices[cl_next_idx][:, 1] - y_center
+    delta_a = vertices[:, 0, 0] - x_center
+    delta_b = vertices[:, 1, 1] - y_center
 
     return torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=1)
+
+def rectangular_vertices_to_5_param(rect_v: torch.Tensor):
+    # transform rectangular vertices to (x, y, w, h, theta)
+    # with x,y being center coordinates of box and theta 
+    # correponding to the theta as defined by the mmcv RoiAlignRotated 
+    # clockwise assumption
+    # (first min_y will be the left one if there are two)
+    repeat_list = [1] * len(rect_v.shape[:-1])
+    repeat_list.append(2)
+    repeat = tuple(repeat_list)
+    min_y_idx = torch.argmin(rect_v[..., 1], dim=-1, keepdim=True)
+    min_y_tensors = torch.gather(rect_v, -2, min_y_idx.unsqueeze(-1).repeat(repeat))
+    # for the reference vector, we need the correct neighbouring vertex 
+    # which is the one with largest x coord
+    max_x_idx = torch.argmax(rect_v[..., 0], dim=-1, keepdim=True)
+    max_x_tensors = torch.gather(rect_v, -2, max_x_idx.unsqueeze(-1).repeat(repeat))
+    ref_vector = max_x_tensors - min_y_tensors
+    angle = torch.arccos(ref_vector[..., 0] / (torch.norm(ref_vector, dim=-1) + 1))
+    width = max_x_tensors[..., 0] - min_y_tensors[..., 0]
+    x_center = min_y_tensors[..., 0] + width/2
+    max_y_idx = torch.argmax(rect_v[..., 1], dim=-1, keepdim=True)
+    max_y_tensors = torch.gather(rect_v, -2, max_y_idx.unsqueeze(-1).repeat(repeat))
+    height =  max_y_tensors[..., 1] - min_y_tensors[..., 1]
+    y_center = min_y_tensors[..., 1] + height / 2
+    five_params = torch.stack((x_center, y_center, width, height, angle), dim=-1).reshape((-1, 5))
+    return five_params

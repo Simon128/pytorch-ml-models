@@ -95,7 +95,10 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
 
         # transform proposals to vertices
         for k in rpn_proposals.keys():
-            midpoint = anchor_offset_to_midpoint_offset(rpn_proposals[k]["anchor_offsets"], anchors[k])
+            midpoint = anchor_offset_to_midpoint_offset(
+                rpn_proposals[k]["anchor_offsets"], 
+                anchors[k]
+            )
             vertices = midpoint_offset_to_vertices(midpoint)
             result[k] = vertices
 
@@ -105,7 +108,6 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
             rect_vertices = self.parallelogram_vertices_to_rectangular_vertices(v)
             cv2_format, hbb = self.rectangular_vertices_to_5_param_and_hbb(rect_vertices)
             batch_indexed = []
-            vertices = []
             level_scores = []
 
             for b_idx in range(b):
@@ -120,8 +122,6 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
                 b, _, _, h, w = rect_vertices.shape
                 flat_vertices = rect_vertices.reshape((b, -1, 4, 2, h, w))
                 flat_vertices = torch.movedim(flat_vertices, (2, 3), (4, 5)).reshape(b, -1, 4, 2)
-                kept_vertices = flat_vertices[b_idx, keep]
-                vertices.append(kept_vertices)
                 kept_scores = topk_scores[keep]
                 n = kept_boxes.shape[0]
                 b_idx_tensor = torch.full((n, 1), b_idx).to(rect_vertices.device)
@@ -132,7 +132,6 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
             result[k] = {}
             result[k]["boxes"] = torch.concatenate(batch_indexed, dim=0)
             result[k]["scores"] = torch.stack(level_scores, dim=0)
-            result[k]["vertices"] = torch.stack(vertices, dim=0)
 
         return result
 
@@ -142,7 +141,6 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
         merged_features = []
         merged_boxes = []
         merged_scores = []
-        merged_vertices = []
 
         for s_idx, k in enumerate(cv2_format.keys()):
             num_batches = fpn_features[k].shape[0]
@@ -152,32 +150,29 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
             batched_boxes = {b: [] for b in range(num_batches)}
             for idx, batch_idx in enumerate(cv2_format[k]["boxes"][:, 0]):
                 batched_roi_align[int(batch_idx.item())].append(roi_align[idx])
-                batched_boxes[int(batch_idx.item())].append(cv2_format[k]["boxes"][idx])
+                batched_boxes[int(batch_idx.item())].append(cv2_format[k]["boxes"][idx, 1:])
             merged_features.append(torch.stack([torch.stack(bra, dim=0) for bra in batched_roi_align.values()], dim=0))
-            merged_boxes.append(torch.stack([torch.stack(bb, dim=0) for bb in batched_boxes.values()], dim=0) * self.fpn_level_scalings[s_idx])
+            boxes = torch.stack([torch.stack(bb, dim=0) for bb in batched_boxes.values()], dim=0)
+            boxes[..., :-1] = boxes[..., :-1] * self.fpn_level_scalings[s_idx]
+            merged_boxes.append(boxes)
             merged_scores.append(cv2_format[k]["scores"])
-            merged_vertices.append(cv2_format[k]["vertices"])
 
         merged_features = torch.concatenate(merged_features, dim=1)
         merged_boxes = torch.concatenate(merged_boxes, dim=1)
         merged_scores = torch.concatenate(merged_scores, dim=1)
-        merged_vertices = torch.concatenate(merged_vertices, dim=1)
 
         filtered_features = []
         filtered_boxes = []
         filtered_scores = []
-        filtered_vertices = []
         num_batches = merged_features.shape[0]
         for b in range(num_batches):
             keep = torch.topk(merged_scores[b], k=1000).indices
             filtered_features.append(merged_features[b, keep])
             filtered_boxes.append(merged_boxes[b, keep])
             filtered_scores.append(merged_scores[b, keep])
-            filtered_vertices.append(merged_vertices[b, keep])
 
         return {
             "features": torch.stack(filtered_features, dim=0), 
             "boxes": torch.stack(filtered_boxes, dim=0), 
-            "scores": torch.stack(filtered_scores, dim=0),
-            "vertices": torch.stack(filtered_vertices, dim=0)
+            "scores": torch.stack(filtered_scores, dim=0)
         }
