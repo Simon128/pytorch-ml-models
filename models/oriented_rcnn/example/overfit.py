@@ -33,6 +33,8 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2500, gamma=0.1)
 
     running_loss = 0
+    running_loss_rpn = dict()
+    running_loss_head = dict()
     model.train()
 
     for i in range(100000):
@@ -113,29 +115,15 @@ if __name__ == "__main__":
         #        image_grid = np.concatenate((image_grid, curr_image), axis=1)
 
         if i % 10 == 0:
-            image_grid = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-            curr_image = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-            regression = pred['regression']
-            rpn_boxes = pred['filtered_rpn_boxes']
+            image = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
+            regression = pred['regression'].squeeze(0)
+            rpn_boxes = pred['filtered_rpn_boxes'].squeeze(0)
 
-            thickness = 1
-            isClosed = True
-            gt_color = (255, 0, 0)
-            pred_color = (0, 0, 255)
-            a_color = (0, 255, 0)
+            for reg, box in zip(regression, rpn_boxes):
+                adj_box = (box + reg).detach().clone().cpu().numpy()
+                rot = ((adj_box[0].item(), adj_box[1].item()), (adj_box[2].item(), adj_box[3].item()), adj_box[4].item())
+                pts = cv2.boxPoints(rot)
+                pts = np.int0(pts)
+                image = cv2.drawContours(image, [pts], 0, (0, 255, 0), 2)
 
-            for g in gt_coords:
-                pts_gt = g.cpu().detach().numpy().astype(np.int32)
-                curr_image = cv2.polylines(curr_image, [pts_gt], isClosed, gt_color, thickness)
-
-            for o in out_coords:
-                pts_pred = o.cpu().detach().numpy().astype(np.int32)
-                curr_image = cv2.polylines(curr_image, [pts_pred], isClosed, pred_color, thickness)
-
-            for a in anchor_coords:
-                pts_anchors = a.cpu().detach().numpy().astype(np.int32)
-                curr_image = cv2.polylines(curr_image, [pts_anchors], isClosed, a_color, thickness)
-
-            image_grid = np.concatenate((image_grid, curr_image), axis=1)
-
-            cv2.imwrite(f"pred_{i}.png", image_grid)
+            cv2.imwrite(f"pred_{i}.png", image)
