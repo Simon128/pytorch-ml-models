@@ -4,7 +4,7 @@ from typing import OrderedDict
 
 from .rpn_loss import RPNLoss
 from .head_loss import HeadLoss
-from ..data_formats import RPNOutput, Annotation
+from ..data_formats import OrientedRCNNOutput, Annotation
 
 class OrientedRCNNLoss(nn.Module):
     def __init__(self, fpn_strides: list[int], n_samples = 256) -> None:
@@ -14,10 +14,9 @@ class OrientedRCNNLoss(nn.Module):
 
     def forward(
             self, 
-            prediction: OrderedDict[str, RPNOutput], 
-            anchors: OrderedDict[str, torch.Tensor],
+            prediction: OrientedRCNNOutput, 
             annotations: Annotation
         ):
-        rpn_loss = self.rpn_loss(prediction, anchors, annotations)
-        head_loss = self.head_loss()
+        rpn_loss = self.rpn_loss(prediction.rpn_output, prediction.anchors, annotations)
+        head_loss = self.head_loss(prediction.head_output, annotation)
         return rpn_loss, head_loss
