@@ -3,6 +3,7 @@ import torch
 
 from .oriented_rpn import OrientedRPN, FPNAnchorGenerator
 from .oriented_rcnn_head import OrientedRCNNHead
+from .data_formats import OrientedRCNNOutput
 
 class OrientedRCNN(nn.Module):
     '''
@@ -18,14 +19,14 @@ class OrientedRCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        b, c, h, w = x.shape
-        backbone_out = self.backbone(x)
-        anchors = self.anchor_generator.generate_like_fpn(backbone_out, w, h, x.device)
-        proposals = self.oriented_rpn(backbone_out)
-        head_out = self.head(proposals, backbone_out, anchors)
-        return {
-            "anchors": anchors,
-            "proposals": proposals, 
-            "feat": backbone_out, 
-            "pred": head_out
-        }
+        _, _, h, w = x.shape
+        feat = self.backbone(x)
+        rpn_out = self.oriented_rpn(feat)
+        anchors = self.anchor_generator.generate_like_fpn(feat, w, h, x.device)
+        head_out = self.head(rpn_out, feat, anchors)
+        return OrientedRCNNOutput(
+            rpn_output=rpn_out,
+            anchors=anchors,
+            backbone_output=feat,
+            head_output=head_out
+        )

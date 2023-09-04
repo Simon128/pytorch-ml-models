@@ -11,7 +11,7 @@ class FPNAnchorGenerator:
 
     def generate_single(self, x: torch.Tensor, sqrt_size: int, image_width: int, image_height: int):
         assert len(x.shape) == 4 # expecting (B, C, H, W)
-        b, c, h, w = x.shape
+        b, _, h, w = x.shape
         feature_width_factor = image_width / w 
         feature_height_factor = image_height / h
         anchors = []
@@ -23,11 +23,11 @@ class FPNAnchorGenerator:
             anchor_height = torch.full((b, h, w), height)
             anchor_x = torch.arange(w).repeat((b, h, 1)) + 0.5
             anchor_y = torch.arange(h).repeat((b, w, 1)).permute((0, 2, 1)) + 0.5
-            anchors.append(torch.stack((anchor_x, anchor_y, anchor_width, anchor_height), dim=1))
+            anchors.append(torch.stack((anchor_x, anchor_y, anchor_width, anchor_height), dim=-1).flatten(1, -2))
 
         return torch.cat(anchors, dim=1)
 
-    def generate_like_fpn(self, x: OrderedDict, image_width: int, image_height: int, device = "cpu"):
+    def generate_like_fpn(self, x: OrderedDict, image_width: int, image_height: int, device: torch.device = torch.device("cpu")):
         assert len(x.values()) == len(self.sqrt_size_per_level), \
             "number of FPN levels and number of size per level does not fit"
 

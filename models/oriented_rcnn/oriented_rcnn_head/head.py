@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 
+from ..data_formats import HeadOutput
+
 from .roi_align_rotated import RoIAlignRotatedWrapper
 
 # todo:
@@ -14,7 +16,7 @@ class OrientedRCNNHead(nn.Module):
             cfg = {}
 
         in_channels = cfg.get("in_channels", 256)
-        fpn_level_scalings = cfg.get("fpn_level_scalings", [4, 8, 16, 32, 64])
+        self.fpn_strides = cfg.get("fpn_strides", [4, 8, 16, 32, 64])
         out_channels = cfg.get("out_channels", 1024)
         self.num_classes = cfg.get("num_classes", 10)
         roi_align_size = cfg.get("roi_align_size", (7,7))
@@ -24,7 +26,7 @@ class OrientedRCNNHead(nn.Module):
             roi_align_size, 
             spatial_scale = 1, 
             sampling_ratio = roi_align_sampling_ratio,
-            fpn_level_scalings=fpn_level_scalings
+            fpn_strides=self.fpn_strides
         )
         self.fc = nn.Sequential(
             nn.Flatten(start_dim=2),
@@ -43,14 +45,11 @@ class OrientedRCNNHead(nn.Module):
 
     def forward(self, proposals: OrderedDict, fpn_feat: OrderedDict, anchors: OrderedDict):
         x = self.roi_align_rotated(fpn_feat, proposals, anchors)
-        batch_size = x['features'].shape[0]
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
-        regression = regression.reshape((batch_size, -1, 5))
-        return {
-            "classification": classification,
-            "regression": regression,
-            "filtered_rpn_boxes": x["boxes"],
-            "filtered_rpn_scores": x["scores"]
-        }
+        boxes = regression + x["boxes"]
+        return HeadOutput(
+            classification=classification,
+            boxes=boxes
+        )

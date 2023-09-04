@@ -4,126 +4,123 @@ import torch
 import os
 import json
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from ..oriented_rcnn_head.loss import oriented_rcnn_head_loss
 
-from ..oriented_rpn import rpn_loss, FPNAnchorGenerator, pred_to_vertices_by_gt, topk_pred_to_vertices
+
+from ..data_formats import Annotation, OrientedRCNNOutput, LossOutput
+from ..encoder import encode, Encodings
+
 from ..model import OrientedRCNN
+from ..loss import RPNLoss
 
-if __name__ == "__main__":
-    device = "cuda"
+def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
-    image = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-    h, w, _ = image.shape
+    image = cv2.imread(os.path.join(dir, "image.tif"), cv2.IMREAD_UNCHANGED) # type: ignore
+    tensor = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
+    return image, tensor.to(device)
 
-    with open(os.path.join(dir, "test_gt2.json"), "r") as fp:
+def load_test_annotation(device: torch.device):
+    dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(dir, "annotation.json"), "r") as fp:
         ground_truth = json.load(fp)
         ground_truth["boxes"] = torch.tensor(ground_truth["boxes"])[:, :4]
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
-    x = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
+    boxes = ground_truth["boxes"].unsqueeze(0).to(device)
+    labels = ground_truth["labels"].unsqueeze(0).to(device)
+    return Annotation(boxes=boxes, classifications=labels)
+
+def visualize_rpn_predictions(
+        image: np.ndarray, 
+        prediction: OrientedRCNNOutput, 
+        index: int,
+        fpn_strides: list[int]
+    ):
+    rpn_out = prediction.rpn_output
+    all_anchors = prediction.anchors
+    image_grid = image.copy() 
+
+    for k, stride in zip(rpn_out.keys(), fpn_strides):
+        curr_image = image.copy()
+        regression = rpn_out[k].anchor_offsets[0] * stride
+        objectness = rpn_out[k].objectness_scores[0] 
+        anchors = all_anchors[k][0] * stride
+        top_idx = torch.topk(objectness, k=100).indices
+        top_regr = torch.gather(regression, 0, top_idx.unsqueeze(-1).repeat((1, 6)))
+        top_anchors = torch.gather(anchors, 0, top_idx.unsqueeze(-1).repeat((1, 4)))
+        top_boxes = encode(top_regr, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, top_anchors)
+        top_anchors_vertices = encode(top_anchors, Encodings.HBB_CENTERED, Encodings.HBB_VERTICES)
+
+        thickness = 1
+        isClosed = True
+        pred_color = (0, 0, 255)
+        a_color = (0, 255, 0)
+
+        for o in top_boxes:
+            pts_pred = o.cpu().detach().numpy().astype(np.int32)
+            curr_image = cv2.polylines(curr_image, [pts_pred], isClosed, pred_color, thickness) # type: ignore
+
+        for a in top_anchors_vertices:
+            anchor_pts = a.cpu().detach().numpy().astype(np.int32)
+            curr_image = cv2.polylines(curr_image, [anchor_pts], isClosed, a_color, thickness) # type: ignore
+
+        image_grid = np.concatenate((image_grid, curr_image), axis=1)
+
+    cv2.imwrite(f"rpn_{index}.png", image_grid) # type: ignore
+
+def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int):
+        image_clone = image.copy()
+        boxes = prediction.head_output.boxes.squeeze(0).detach().clone().cpu().numpy()
+
+        for box in boxes:
+            rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
+            pts = cv2.boxPoints(rot) # type: ignore
+            pts = np.int0(pts) # type: ignore
+            image = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
+
+        cv2.imwrite(f"head_{index}.png", image) # type: ignore
+
+if __name__ == "__main__":
+    device = torch.device("cuda")
+    image, tensor = load_test_image(device)
+    annotation = load_test_annotation(device)
+    h, w, _ = image.shape
+    fpn_strides = [4, 8, 16, 32, 64]
+
     backbone = resnet_fpn_backbone('resnet18', pretrained=False, norm_layer=None, trainable_layers=5).to(device)
     backbone.train()
     model = OrientedRCNN(backbone, {}).to(device)
-
-    gt = ground_truth["boxes"].unsqueeze(0).to(device)
-    gt_cls = ground_truth["labels"].unsqueeze(0).to(device)
+    model.train()
     optimizer = torch.optim.Adam([
         {"params": model.parameters()}
         ], lr=0.0001)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2500, gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+    criterion = RPNLoss(fpn_strides=fpn_strides)
 
-    running_loss = 0
-    running_loss_rpn = dict()
-    running_loss_head = dict()
-    model.train()
+    running_loss: LossOutput | None = None
+    epochs = 10000
 
-    for i in range(100000):
+    for e in range(epochs):
         optimizer.zero_grad()
-        out = model(x.to(device))
-        rpn_out = out["proposals"]
-        feat = out["feat"]
-        pred = out["pred"]
-        anchors = out["anchors"]
-
-        loss_dict = {}
-
-        for (k, v), ds in zip(rpn_out.items(), [4, 8, 16, 32, 64]):
-            b_loss_dict = rpn_loss(
-                    v["anchor_offsets"], 
-                    v["objectness_scores"], 
-                    anchors[k].to(device), 
-                    gt,
-                    ds
-            )
-            for k, v in b_loss_dict.items():
-                loss_dict.setdefault(k, [])
-                loss_dict[k].append(v)
-
-        loss = torch.stack(loss_dict["loss"]).sum()
-
-        loss_dict = oriented_rcnn_head_loss(
-            pred["classification"], 
-            pred["regression"], 
-            pred["filtered_rpn_boxes"],
-            gt_cls,
-            gt
-        )
-        loss += loss_dict["loss"]
+        out: OrientedRCNNOutput = model(tensor.to(device))
+        rpn_loss: LossOutput = criterion(out.rpn_output, out.anchors, annotation)
+        loss = rpn_loss.total_loss
 
         loss.backward()
         optimizer.step()
-        running_loss += loss.item()
+        if running_loss is None:
+            running_loss = rpn_loss
+        else:
+            running_loss = running_loss + rpn_loss.detach().clone()
+
         scheduler.step()
         
-        if i % 10 == 0:
-            last_loss = running_loss / 10 # loss every 10 epochs
-            print('  epoch {} loss: {}'.format(i + 1, last_loss))
-            running_loss = 0.
+        if e % 10 == 0:
+            running_loss.total_loss /= 10
+            running_loss.classification_loss /= 10
+            running_loss.regression_loss /= 10
+            print(f"Epoch: {e}")
+            print(running_loss)
+            running_loss = None
 
-        #if i % 10 == 0:
-        #    image_grid = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-        #    for k, scale in zip(rpn_out.keys(), [4, 8, 16, 32, 64]):
-        #        curr_image = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-        #        regression = rpn_out[k]['anchor_offsets']
-        #        objectness = rpn_out[k]['objectness_scores']
-        #        #gt_coords, out_coords, anchor_coords = pred_to_vertices_by_gt(
-        #        #        anchors[k][0].to(device), gt[0], regression[0], scale#, objectness[0]
-        #        #)
-        #        gt_coords, out_coords, anchor_coords = topk_pred_to_vertices(
-        #                anchors[k][0].to(device), gt[0], regression[0], scale, objectness[0]
-        #        )
-
-
-        #        thickness = 1
-        #        isClosed = True
-        #        gt_color = (255, 0, 0)
-        #        pred_color = (0, 0, 255)
-        #        a_color = (0, 255, 0)
-
-        #        for g in gt_coords:
-        #            pts_gt = g.cpu().detach().numpy().astype(np.int32)
-        #            curr_image = cv2.polylines(curr_image, [pts_gt], isClosed, gt_color, thickness)
-
-        #        for o in out_coords:
-        #            pts_pred = o.cpu().detach().numpy().astype(np.int32)
-        #            curr_image = cv2.polylines(curr_image, [pts_pred], isClosed, pred_color, thickness)
-
-        #        for a in anchor_coords:
-        #            pts_anchors = a.cpu().detach().numpy().astype(np.int32)
-        #            curr_image = cv2.polylines(curr_image, [pts_anchors], isClosed, a_color, thickness)
-
-        #        image_grid = np.concatenate((image_grid, curr_image), axis=1)
-
-        if i % 10 == 0:
-            image = cv2.imread(os.path.join(dir, "test_img.tif"), cv2.IMREAD_UNCHANGED)
-            regression = pred['regression'].squeeze(0)
-            rpn_boxes = pred['filtered_rpn_boxes'].squeeze(0)
-
-            for reg, box in zip(regression, rpn_boxes):
-                adj_box = (box + reg).detach().clone().cpu().numpy()
-                rot = ((adj_box[0].item(), adj_box[1].item()), (adj_box[2].item(), adj_box[3].item()), adj_box[4].item())
-                pts = cv2.boxPoints(rot)
-                pts = np.int0(pts)
-                image = cv2.drawContours(image, [pts], 0, (0, 255, 0), 2)
-
-            cv2.imwrite(f"pred_{i}.png", image)
+        if e % 100 == 0:
+            visualize_rpn_predictions(image, out, e, fpn_strides)

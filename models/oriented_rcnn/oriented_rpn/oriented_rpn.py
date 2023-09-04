@@ -1,6 +1,9 @@
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from collections import OrderedDict
+from ..data_formats import *
+
 
 class OrientedRPN(nn.Module):
     def __init__(self, cfg: dict = {}):
@@ -21,9 +24,14 @@ class OrientedRPN(nn.Module):
 
     def forward_single(self, x: torch.Tensor, fpn_level: str):
         x = self.conv[fpn_level](x)
+        b, _, h, w = x.shape
         anchor_offsets = self.regression_branch[fpn_level](x)
+        anchor_offsets = anchor_offsets.reshape((b, self.num_anchors, -1, h, w))
+        anchor_offsets = torch.movedim(anchor_offsets, 2, -1)
+        anchor_offsets = anchor_offsets.flatten(1, -2)
         objectness_scores = self.objectness_branch[fpn_level](x)
-        return {"anchor_offsets": anchor_offsets, "objectness_scores": objectness_scores}
+        objectness_scores = objectness_scores.flatten(1)
+        return RPNOutput(anchor_offsets=anchor_offsets, objectness_scores=objectness_scores)
 
     def forward(self, x):
         assert isinstance(x, OrderedDict)
