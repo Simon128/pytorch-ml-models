@@ -51,8 +51,7 @@ class LossOutput:
             "-----------------------------\n" \
             + f"total_loss: {self.total_loss}\n" \
             + f"regression_loss: {self.regression_loss}\n" \
-            + f"classification_loss: {self.classification_loss}\n" \
-            + "-----------------------------\n"
+            + f"classification_loss: {self.classification_loss}" \
 
 @dataclass
 class Annotation:

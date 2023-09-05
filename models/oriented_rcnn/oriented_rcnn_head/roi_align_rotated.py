@@ -105,7 +105,8 @@ class RoIAlignRotatedWrapper(RoIAlignRotated):
         for k, v in result.items():
             b = rpn_proposals[k].objectness_scores.shape[0]
             rect_vertices = self.parallelogram_vertices_to_rectangular_vertices(v)
-            cv2_format, hbb = self.rectangular_vertices_to_5_param_and_hbb(rect_vertices)
+            cv2_format = encode(rect_vertices, Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
+            hbb = encode(rect_vertices, Encodings.VERTICES, Encodings.HBB_CORNERS)
             batch_indexed = []
             level_scores = []
 

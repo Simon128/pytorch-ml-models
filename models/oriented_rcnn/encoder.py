@@ -180,8 +180,7 @@ class Encoder:
             vertices = self.__midpoint_offset_to_vertices(self.data)
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
         elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
-            hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
+            hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data[..., :-1])
         elif self.encoding == Encodings.HBB_CENTERED:
             hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data)
         elif self.encoding == Encodings.HBB_CORNERS:
@@ -208,8 +207,7 @@ class Encoder:
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
             hbb_corners = self.__hbb_vertices_to_hbb_corners(hbb_vertices)
         elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
-            hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
+            hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data[..., :-1])
             hbb_corners = self.__hbb_vertices_to_hbb_corners(hbb_vertices)
         elif self.encoding == Encodings.HBB_CENTERED:
             hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data)
@@ -314,15 +312,17 @@ class Encoder:
         # which is the one with largest x coord
         max_x_idx = torch.argmax(vertices[..., 0], dim=-1, keepdim=True)
         max_x_tensors = torch.gather(vertices, -2, max_x_idx.unsqueeze(-1).repeat(repeat))
-        ref_vector = max_x_tensors - min_y_tensors
+        min_x_idx = torch.argmin(vertices[..., 0], dim=-1, keepdim=True)
+        min_x_tensors = torch.gather(vertices, -2, min_x_idx.unsqueeze(-1).repeat(repeat))
+        ref_vector = max_x_tensors + min_y_tensors
         angle = torch.arccos(ref_vector[..., 0] / (torch.norm(ref_vector, dim=-1) + 1))
-        width = max_x_tensors[..., 0] - min_y_tensors[..., 0]
-        x_center = min_y_tensors[..., 0] + width/2
-        max_y_idx = torch.argmax(vertices[..., 1], dim=-1, keepdim=True)
-        max_y_tensors = torch.gather(vertices, -2, max_y_idx.unsqueeze(-1).repeat(repeat))
-        height =  max_y_tensors[..., 1] - min_y_tensors[..., 1]
+        width = torch.norm(max_x_tensors - min_y_tensors, dim=-1)
+        x_center = min_x_tensors[..., 0] + width/2
+        pre_min_y_idx = (min_y_idx + (min_y_idx - max_x_idx)) % 4
+        pre_min_y_tensors = torch.gather(vertices, -2, pre_min_y_idx.unsqueeze(-1).repeat(repeat))
+        height =  torch.norm(pre_min_y_tensors - min_y_tensors, dim=-1)
         y_center = min_y_tensors[..., 1] + height / 2
-        five_params = torch.stack((x_center, y_center, width, height, angle), dim=-1).reshape((-1, 5))
+        five_params = torch.cat((x_center, y_center, width, height, angle), dim=-1)
         return five_params
 
     def __oriented_cv2_to_vertices(self, vertices: torch.Tensor):
