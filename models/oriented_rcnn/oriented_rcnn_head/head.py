@@ -6,9 +6,6 @@ from ..data_formats import HeadOutput
 
 from .roi_align_rotated import RoIAlignRotatedWrapper
 
-# todo:
-# https://mmcv.readthedocs.io/en/latest/api/generated/mmcv.ops.RoIAlignRotated.html?highlight=rotated%20roi%20align#mmcv.ops.RoIAlignRotated
-
 class OrientedRCNNHead(nn.Module):
     def __init__(self, cfg: dict = {}):
         super().__init__()
@@ -48,6 +45,7 @@ class OrientedRCNNHead(nn.Module):
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
+        # this needs to be changed
         boxes = regression + x["boxes"]
         return HeadOutput(
             classification=classification,

@@ -1,5 +1,6 @@
 import torch
 from enum import Enum, auto
+import math
 
 class Encodings(Enum):
     VERTICES = auto(), # shape (..., 4, 2) [4 vertices á (x,y)]
@@ -297,31 +298,168 @@ class Encoder:
         delta_b = vertices[..., 1, 1] - y_center
         return torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=-1)
 
-    def __vertices_to_oriented_cv2(self, vertices: torch.Tensor):
-        # transform rectangular vertices to (x, y, w, h, theta)
-        # with x,y being center coordinates of box and theta 
-        # correponding to the theta as defined by the mmcv RoiAlignRotated 
-        # clockwise assumption
-        # (first min_y will be the left one if there are two)
+    def __get_top_left_vertices(self, vertices: torch.Tensor):
         repeat_list = [1] * len(vertices.shape[:-1])
         repeat_list.append(2)
         repeat = tuple(repeat_list)
+        # torch argmin returns the first minimal vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
         min_y_idx = torch.argmin(vertices[..., 1], dim=-1, keepdim=True)
         min_y_tensors = torch.gather(vertices, -2, min_y_idx.unsqueeze(-1).repeat(repeat))
-        # for the reference vector, we need the correct neighbouring vertex 
-        # which is the one with largest x coord
+
+        # however, if the angle is pi/2, then we have two min_y vertices
+        # we need to check, which on is the left one (smaller x)
+        # for this, we just flip the order of the vertices and use argmin
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        min_y_idx_second = torch.argmin(flipped_vertices[..., 1], dim=-1, keepdim=True)
+        min_y_tensors_second = torch.gather(flipped_vertices, -2, min_y_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with smaller x
+        tensors = torch.where(
+            min_y_tensors[..., 0].unsqueeze(-1).repeat(repeat) > min_y_tensors_second[..., 0].unsqueeze(-1).repeat(repeat), 
+            min_y_tensors_second, 
+            min_y_tensors
+        )
+        return tensors
+    
+    def __get_top_right_vertices(self, vertices: torch.Tensor):
+        repeat_list = [1] * len(vertices.shape[:-1])
+        repeat_list.append(2)
+        repeat = tuple(repeat_list)
+        # torch argmax returns the first maximal vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
         max_x_idx = torch.argmax(vertices[..., 0], dim=-1, keepdim=True)
         max_x_tensors = torch.gather(vertices, -2, max_x_idx.unsqueeze(-1).repeat(repeat))
+
+        # however, if the angle is pi/2, then we have two max x vertices
+        # we need to check, which on is the left one (smaller y)
+        # for this, we just flip the order of the vertices and use argmax
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        max_x_idx_second = torch.argmax(flipped_vertices[..., 0], dim=-1, keepdim=True)
+        max_x_tensors_second = torch.gather(flipped_vertices, -2, max_x_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with smaller y 
+        tensors = torch.where(
+            max_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) > max_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            max_x_tensors_second, 
+            max_x_tensors
+        )
+        return tensors
+
+    def __get_bot_left_vertices(self, vertices: torch.Tensor):
+        repeat_list = [1] * len(vertices.shape[:-1])
+        repeat_list.append(2)
+        repeat = tuple(repeat_list)
+        # torch argmin returns the first minial vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
         min_x_idx = torch.argmin(vertices[..., 0], dim=-1, keepdim=True)
         min_x_tensors = torch.gather(vertices, -2, min_x_idx.unsqueeze(-1).repeat(repeat))
-        ref_vector = max_x_tensors + min_y_tensors
-        angle = torch.arccos(ref_vector[..., 0] / (torch.norm(ref_vector, dim=-1) + 1))
-        width = torch.norm(max_x_tensors - min_y_tensors, dim=-1)
-        x_center = min_x_tensors[..., 0] + width/2
-        pre_min_y_idx = (min_y_idx + (min_y_idx - max_x_idx)) % 4
-        pre_min_y_tensors = torch.gather(vertices, -2, pre_min_y_idx.unsqueeze(-1).repeat(repeat))
-        height =  torch.norm(pre_min_y_tensors - min_y_tensors, dim=-1)
-        y_center = min_y_tensors[..., 1] + height / 2
+
+        # however, if the angle is pi/2, then we have two min x vertices
+        # we need to check, which on is the bot one (larger y)
+        # for this, we just flip the order of the vertices and use argmax
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        min_x_idx_second = torch.argmin(flipped_vertices[..., 0], dim=-1, keepdim=True)
+        min_x_tensors_second = torch.gather(flipped_vertices, -2, min_x_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with larger y 
+        tensors = torch.where(
+            min_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) < min_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            min_x_tensors_second, 
+            min_x_tensors
+        )
+        return tensors
+
+    def __parallelogram_vertices_to_rectangular_vertices(self, parallelogram: torch.Tensor):
+        # we get the vectors of both diagonales,
+        # normalize them by length
+        # and for the shorter diagonal we add the corresponding norm. vector
+        # to both endpoints (vertices) scaled by the diag. length difference / 2
+        rep = [1] * (len(parallelogram.shape) - 1)
+        rep[-1] += 1
+        rep = tuple(rep)
+
+        v1 = parallelogram[..., 0, :]
+        v2 = parallelogram[..., 1, :]
+        v3 = parallelogram[..., 2, :]
+        v4 = parallelogram[..., 3, :]
+
+        diag1_len = torch.sqrt(
+            torch.square(v3[..., 0] - v1[..., 0]) + 
+            torch.square(v3[..., 1] - v1[..., 1])
+        ).unsqueeze(-1).repeat(rep)
+        diag2_len = torch.sqrt(
+            torch.square(v4[..., 0] - v2[..., 0]) + 
+            torch.square(v4[..., 1] - v2[..., 1])
+        ).unsqueeze(-1).repeat(rep)
+    
+        # assume diag1_len > diag2_len
+        # extend diag2
+        extension_len = (diag1_len - diag2_len) / 2
+        norm_ext_vector = (v4 - v2) / diag2_len
+        new_v4 = v4 + norm_ext_vector * extension_len
+        new_v2 = v2 + -1 * norm_ext_vector * extension_len
+
+        # assume diag1_len < diag2_len
+        # extend diag1
+        extension_len = (diag2_len - diag1_len) / 2
+        norm_ext_vector = (v3 - v1) / diag1_len
+        new_v3 = v3 + norm_ext_vector * extension_len
+        new_v1 = v1 + -1 * norm_ext_vector * extension_len
+
+        v1_new = torch.where(diag1_len > diag2_len, v1, new_v1)
+        v2_new = torch.where(diag1_len > diag2_len, new_v2, v2)
+        v3_new = torch.where(diag1_len > diag2_len, v3, new_v3)
+        v4_new = torch.where(diag1_len > diag2_len, new_v4, v4)
+
+        return torch.stack((v1_new, v2_new, v3_new, v4_new), dim=-2)
+
+    def __vertices_to_oriented_cv2(self, vertices: torch.Tensor):
+        # transform rectangular vertices to (x, y, w, h, theta)
+        # note: theta is in rad!
+        # with x,y being center coordinates of box and theta 
+        # correponding to the theta as defined by the mmcv RoiAlignRotated 
+        vertices = self.__parallelogram_vertices_to_rectangular_vertices(vertices)
+
+        # we need the top_left vertex as origin for angle computation
+        tl_vertices = self.__get_top_left_vertices(vertices)
+        # and top right vertex as reference point 
+        tr_vertices = self.__get_top_right_vertices(vertices)
+
+        # we need the reference vector from top left to top right
+        # note: inverted y axis
+        #ref_vector = torch.stack((tr_vertices[..., 0] - tl_vertices[..., 0], tr_vertices[..., 1] - tl_vertices[..., 1]), dim=-1)
+        ref_vector = tr_vertices - tl_vertices
+        ref_vector[..., 1] = ref_vector[..., 1] * -1
+        # then, we can compute the angle between this reference vector and the x axis
+        rel_x_axis = torch.stack((ref_vector[..., 0], torch.zeros_like(ref_vector[..., 1])), dim=-1).to(ref_vector.device)
+        angle = torch.arccos(
+            (ref_vector[..., 0] * rel_x_axis[..., 0] + ref_vector[..., 1] * rel_x_axis[..., 1]) / 
+            (torch.norm(ref_vector, p=2, dim=-1) * torch.norm(rel_x_axis, p=2, dim=-1))
+        ) 
+        # now, we can compute the width, which is just the length of the reference vector
+        width = torch.norm(ref_vector, dim=-1)
+        # for height, we need to get the bot left vertex as reference
+        # and compute the length of the vector between top left and bot left
+        bl_vertices = self.__get_bot_left_vertices(vertices)
+        height = torch.norm(bl_vertices - tl_vertices, dim=-1)
+        
+        # x/y center is just the halfway point between the top right and bottom left vertex
+        center = tr_vertices + (bl_vertices - tr_vertices) / 2
+        x_center = center[..., 0]
+        y_center = center[..., 1]
+
+        # axis aligned
+        #if angle == 0:
+        #    # cv2 format: width and height are flipped
+        #    # and angle is w.r.t bottom left point, i.e. pi/2
+        #    # see example for cv>=4.5.1. in 
+        #    # https://github.com/open-mmlab/mmrotate/blob/main/docs/en/intro.md
+        #    angle = torch.full_like(angle, math.pi/2)
+        #    temp = width
+        #    width = height
+        #    height = temp
+
         five_params = torch.cat((x_center, y_center, width, height, angle), dim=-1)
         return five_params
 

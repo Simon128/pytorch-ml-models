@@ -39,7 +39,7 @@ class HeadLoss(nn.Module):
             if len(positives_idx[0]) > 0:
                 cls_target[positives_idx[0]] = classification_targets[b][positives_idx[1]]
 
-            cls_loss = F.cross_entropy(class_pred[b][sample_mask], cls_target[sample_mask].to(torch.long), reduction='mean')
+            cls_loss = F.cross_entropy(class_pred[b][sample_mask], cls_target[sample_mask].to(torch.long), reduction='sum')
             cls_losses.append(cls_loss)
 
             if len(positives_idx[0]) <= 0:
@@ -47,7 +47,7 @@ class HeadLoss(nn.Module):
 
             relevant_gt = box_targets[positives_idx[1]]
             relevant_pred = box_pred[b][positives_idx[0]]
-            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_gt, reduction='mean')
+            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_gt, reduction='sum')
             regr_losses.append(regr_loss)
 
         classification_loss = torch.tensor(cls_losses).sum() / batch_size

@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import os
 import json
+import math
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 
 from ..data_formats import Annotation, OrientedRCNNOutput, LossOutput
@@ -40,14 +41,19 @@ def visualize_rpn_predictions(
 
     for k, stride in zip(rpn_out.keys(), fpn_strides):
         curr_image = image.copy()
-        regression = rpn_out[k].anchor_offsets[0] * stride
+        regression = rpn_out[k].anchor_offsets[0] 
         objectness = rpn_out[k].objectness_scores[0] 
-        anchors = all_anchors[k][0] * stride
-        top_idx = torch.topk(objectness, k=100).indices
-        top_regr = torch.gather(regression, 0, top_idx.unsqueeze(-1).repeat((1, 6)))
-        top_anchors = torch.gather(anchors, 0, top_idx.unsqueeze(-1).repeat((1, 4)))
-        top_boxes = encode(top_regr, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, top_anchors)
-        top_anchors_vertices = encode(top_anchors, Encodings.HBB_CENTERED, Encodings.HBB_VERTICES)
+        anchors = all_anchors[k][0] 
+        mask = torch.sigmoid(objectness) > 0.8
+        k = min(mask.count_nonzero().item(), 100)
+        thr_objectness = objectness[mask]
+        thr_regression = regression[mask]
+        thr_anchors = anchors[mask]
+        top_idx = torch.topk(thr_objectness, k=int(k)).indices
+        top_regr = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 6)))
+        top_anchors = torch.gather(thr_anchors, 0, top_idx.unsqueeze(-1).repeat((1, 4)))
+        top_boxes = encode(top_regr, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, top_anchors) * stride
+        top_anchors_vertices = encode(top_anchors, Encodings.HBB_CENTERED, Encodings.HBB_VERTICES) * stride
 
         thickness = 1
         isClosed = True
@@ -67,30 +73,44 @@ def visualize_rpn_predictions(
     cv2.imwrite(f"rpn_{index}.png", image_grid) # type: ignore
 
 def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int):
-        image_clone = image.copy()
-        boxes = prediction.head_output.boxes.squeeze(0).detach().clone().cpu().numpy()
+    image_clone = image.copy()
+    _cls = prediction.head_output.classification.squeeze(0)
+    mask = torch.sigmoid(_cls[..., -1]) < 0.2
+    k = min(mask.count_nonzero().item(), 100)
+    thr_cls = _cls[mask]
+    thr_regression = prediction.head_output.boxes.squeeze(0)[mask]
+    top_idx = torch.topk(thr_cls[..., -1], k=int(k), largest=False).indices
+    top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
+    top_boxes = top_boxes.detach().clone().cpu().numpy()
 
-        for box in boxes:
-            rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
-            pts = cv2.boxPoints(rot) # type: ignore
-            pts = np.int0(pts) # type: ignore
-            image = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
+    for box in top_boxes:
+        rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item() * 180 / math.pi)
+        pts = cv2.boxPoints(rot) # type: ignore
+        pts = np.int0(pts) # type: ignore
+        image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
 
-        cv2.imwrite(f"head_{index}.png", image) # type: ignore
+    cv2.imwrite(f"head_{index}.png", image_clone) # type: ignore
 
 if __name__ == "__main__":
-    device = torch.device("cpu")
+    device = torch.device("cuda")
     image, tensor = load_test_image(device)
     annotation = load_test_annotation(device)
 
     # debug
     image_clone = image.copy()
-    box = encode(annotation.boxes[0], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)[10]
-    rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
-    pts = cv2.boxPoints(rot) # type: ignore
-    pts = np.int0(pts) # type: ignore
-    image = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
-    cv2.imwrite(f"test.png", image) # type: ignore
+    boxes = encode(annotation.boxes[0], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
+    for box in boxes:
+        rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item() * 180 / math.pi)
+        pts = cv2.boxPoints(rot) # type: ignore
+        pts = np.int0(pts) # type: ignore
+        image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 1) # type: ignore
+    cv2.imwrite(f"test.png", image_clone) # type: ignore
+    image_clone = image.copy()
+    for box in annotation.boxes[0]:
+        pts = box.detach().clone().cpu().numpy()
+        pts = np.int0(pts) # type: ignore
+        image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 0, 255), 1) # type: ignore
+    cv2.imwrite(f"test_gt.png", image_clone) # type: ignore
     #
 
     h, w, _ = image.shape
