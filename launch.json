@@ -11,7 +11,7 @@
       "env": {
         "CUDA_LAUNCH_BLOCKING": "1"
       },
-      "module": "models.oriented_rcnn.example.overfit",
+      "module": "models.orientedrcnn.example.overfit",
       "justMyCode": true
     }
   ]
