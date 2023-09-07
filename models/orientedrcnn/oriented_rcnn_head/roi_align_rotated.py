@@ -1,4 +1,3 @@
-from mmcv.ops import nms
 import torch
 import numpy as np
 from collections import OrderedDict
@@ -8,9 +7,11 @@ from torch.autograd.function import once_differentiable
 from torch.nn.modules.utils import _pair
 from ..data_formats import RPNOutput
 from ..encoder import encode, Encodings
-import os
+from torchvision.ops import nms
 
 import orientedrcnn._C as _C
+
+EPS = 1e-8
 
 class _ROIAlignRotated(Function):
     @staticmethod
@@ -112,10 +113,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             spatial_scale, 
             sampling_ratio=sampling_ratio
         )
-        self.test = 0
 
     def process_rpn_proposals(self, rpn_proposals: OrderedDict[str, RPNOutput], anchors: OrderedDict):
-        self.test += 1
         result = OrderedDict()
 
         # transform proposals to vertices
@@ -136,7 +135,6 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             hbb = encode(v, Encodings.VERTICES, Encodings.HBB_CORNERS)
             batch_indexed = []
             level_scores = []
-            filtered_vertices = []
 
             for b_idx in range(b):
                 # take the top 2000 rpn proposals and apply nms
@@ -144,12 +142,9 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                 topk_proposals = torch.topk(rpn_proposals[k].objectness_scores[b_idx], k=topk_k)
                 topk_idx = topk_proposals.indices
                 topk_scores = topk_proposals.values
-                nms_result = nms(hbb[b_idx, topk_idx], topk_scores, 0.5)
-                keep = nms_result[1]
+                keep = nms(hbb[b_idx, topk_idx], topk_scores, 0.5)
                 topk_boxes = cv2_format[b_idx, topk_idx]
                 kept_boxes = topk_boxes[keep]
-                topk_vertices = v[b_idx, topk_idx]
-                filtered_vertices.append(topk_vertices[keep])
                 kept_scores = topk_scores[keep]
                 n = kept_boxes.shape[0]
                 b_idx_tensor = torch.full((n, 1), b_idx).to(v.device)
@@ -160,7 +155,6 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             result[k] = {}
             result[k]["boxes"] = torch.concatenate(batch_indexed, dim=0)
             result[k]["scores"] = torch.stack(level_scores, dim=0)
-            result[k]["vertices"] = torch.stack(filtered_vertices, dim=0)
 
         return result
 
@@ -170,13 +164,12 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         merged_features = []
         merged_boxes = []
         merged_scores = []
-        merged_vertices = []
 
         for s_idx, k in enumerate(cv2_format.keys()):
             num_batches = fpn_features[k].shape[0]
             roi_align = super().forward(fpn_features[k], cv2_format[k]["boxes"])
             # todo
-            roi_align = torch.nan_to_num(roi_align, 0.0)
+            roi_align = torch.nan_to_num(roi_align, EPS, EPS, EPS)
             # todo: find a better way
             batched_roi_align = {b: [] for b in range(num_batches)}
             batched_boxes = {b: [] for b in range(num_batches)}
@@ -188,10 +181,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             boxes[..., :-1] = boxes[..., :-1] * self.fpn_strides[s_idx]
             merged_boxes.append(boxes)
             merged_scores.append(cv2_format[k]["scores"])
-            merged_vertices.append(cv2_format[k]["vertices"] * self.fpn_strides[s_idx])
 
         merged_features = torch.concatenate(merged_features, dim=1)
-        merged_vertices = torch.concatenate(merged_vertices, dim=1)
         merged_boxes = torch.concatenate(merged_boxes, dim=1)
         merged_scores = torch.concatenate(merged_scores, dim=1)
 

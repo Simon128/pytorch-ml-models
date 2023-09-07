@@ -1,6 +1,7 @@
 import torch
 from enum import Enum, auto
-import math
+
+EPS = 1e-7
 
 class Encodings(Enum):
     VERTICES = auto(), # shape (..., 4, 2) [4 vertices á (x,y)]
@@ -43,6 +44,7 @@ class Encoder:
                 len(data.shape) >= 1 and data.shape[-1] == 6
                 ), \
                 f"data shape ({data.shape}) wrong for encoding {encoding}, expected (..., 6)"
+            data = torch.clamp(data, min=-100000, max=100000)
         elif encoding == Encodings.ORIENTED_CV2_FORMAT:
             assert (
                 len(data.shape) >= 1 and data.shape[-1] == 5
@@ -53,7 +55,8 @@ class Encoder:
                 len(data.shape) >= 1 and data.shape[-1] == 4
                 ), \
                 f"data shape ({data.shape}) wrong for encoding {encoding}, expected (..., 4)"
-        self.data = data
+        # prevent malformed data
+        self.data = torch.clamp(data, min=-100000, max=100000)
         self.anchors = anchors
         self.encoding = encoding
 
@@ -254,10 +257,13 @@ class Encoder:
         return self.data
 
     def __anchor_offset_to_midpoint_offset(self, anchor_offset: torch.Tensor, anchors: torch.Tensor):
-        w = anchors[..., 2] * torch.exp(anchor_offset[..., 2])
-        h = anchors[..., 3] * torch.exp(anchor_offset[..., 3])
+        # we have to clamp the anchor offsets for the exp functions
+        # to prevent inf and therefore nan gradients
+        w = anchors[..., 2] * torch.exp(torch.clamp(anchor_offset[..., 2], min=-10, max=10))
+        h = anchors[..., 3] * torch.exp(torch.clamp(anchor_offset[..., 3], min=-10, max=10))
         x = anchor_offset[..., 0] * anchors[..., 2] + anchors[..., 0]
         y = anchor_offset[..., 1] * anchors[..., 3] + anchors[..., 1]
+
         delta_alpha = anchor_offset[..., 4] * w
         delta_beta = anchor_offset[..., 5] * h
         midpoint_offset = torch.stack((x, y, w, h, delta_alpha, delta_beta), dim=-1)
@@ -383,27 +389,21 @@ class Encoder:
         v2 = parallelogram[..., 1, :]
         v3 = parallelogram[..., 2, :]
         v4 = parallelogram[..., 3, :]
-
-        diag1_len = torch.sqrt(
-            torch.square(v3[..., 0] - v1[..., 0]) + 
-            torch.square(v3[..., 1] - v1[..., 1])
-        ).unsqueeze(-1).repeat(rep)
-        diag2_len = torch.sqrt(
-            torch.square(v4[..., 0] - v2[..., 0]) + 
-            torch.square(v4[..., 1] - v2[..., 1])
-        ).unsqueeze(-1).repeat(rep)
+        # see https://github.com/pytorch/pytorch/issues/43211
+        diag1_len = torch.norm(v3 - v1, dim=-1).unsqueeze(-1).repeat(rep)
+        diag2_len = torch.norm(v4 - v2, dim=-1).unsqueeze(-1).repeat(rep)
     
         # assume diag1_len > diag2_len
         # extend diag2
         extension_len = (diag1_len - diag2_len) / 2
-        norm_ext_vector = (v4 - v2) / diag2_len
+        norm_ext_vector = (v4 - v2) / torch.clamp(diag2_len, EPS)
         new_v4 = v4 + norm_ext_vector * extension_len
         new_v2 = v2 + -1 * norm_ext_vector * extension_len
 
         # assume diag1_len < diag2_len
         # extend diag1
         extension_len = (diag2_len - diag1_len) / 2
-        norm_ext_vector = (v3 - v1) / diag1_len
+        norm_ext_vector = (v3 - v1) / torch.clamp(diag1_len, EPS)
         new_v3 = v3 + norm_ext_vector * extension_len
         new_v1 = v1 + -1 * norm_ext_vector * extension_len
 
@@ -434,8 +434,8 @@ class Encoder:
         # then, we can compute the angle between this reference vector and the x axis
         rel_x_axis = torch.stack((ref_vector[..., 0], torch.zeros_like(ref_vector[..., 1])), dim=-1).to(ref_vector.device)
         angle = torch.arccos(
-            (ref_vector[..., 0] * rel_x_axis[..., 0] + ref_vector[..., 1] * rel_x_axis[..., 1]) / 
-            (torch.norm(ref_vector, p=2, dim=-1) * torch.norm(rel_x_axis, p=2, dim=-1))
+            torch.clamp((ref_vector[..., 0] * rel_x_axis[..., 0] + ref_vector[..., 1] * rel_x_axis[..., 1]) / 
+            torch.clamp(torch.norm(ref_vector, p=2, dim=-1) * torch.norm(rel_x_axis, p=2, dim=-1), min=EPS), min=-1+EPS, max=1-EPS)
         ) 
         # now, we can compute the width, which is just the length of the reference vector
         width = torch.norm(ref_vector, dim=-1)
@@ -449,7 +449,7 @@ class Encoder:
         x_center = center[..., 0]
         y_center = center[..., 1]
 
-        # axis aligned
+        # todo: axis aligned
         #if angle == 0:
         #    # cv2 format: width and height are flipped
         #    # and angle is w.r.t bottom left point, i.e. pi/2

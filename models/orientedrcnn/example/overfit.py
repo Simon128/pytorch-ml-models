@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
 import torch
+from torch import autograd
 import os
 import json
 import math
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torch.profiler import profile, record_function, ProfilerActivity
 
 from ..data_formats import Annotation, OrientedRCNNOutput, LossOutput
 from ..encoder import encode, Encodings
@@ -15,7 +17,6 @@ from ..loss import OrientedRCNNLoss
 def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
     image = cv2.imread(os.path.join(dir, "image.tif"), cv2.IMREAD_UNCHANGED) # type: ignore
-    image = cv2.resize(image, (600, 600), interpolation = cv2.INTER_AREA)
     tensor = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
     return image, tensor.to(device)
 
@@ -75,11 +76,11 @@ def visualize_rpn_predictions(
 
 def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int):
     image_clone = image.copy()
-    _cls = prediction.head_output.classification.squeeze(0)
+    _cls = prediction.head_output.classification[0]
     mask = torch.sigmoid(_cls[..., -1]) < 0.2
     k = min(mask.count_nonzero().item(), 100)
     thr_cls = _cls[mask]
-    thr_regression = prediction.head_output.boxes.squeeze(0)[mask]
+    thr_regression = prediction.head_output.boxes[0][mask]
     top_idx = torch.topk(thr_cls[..., -1], k=int(k), largest=False).indices
     top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
     top_boxes = top_boxes.detach().clone().cpu().numpy()
@@ -92,6 +93,7 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
 
     cv2.imwrite(f"head_{index}.png", image_clone) # type: ignore
 
+
 if __name__ == "__main__":
     device = torch.device("cuda")
     image, tensor = load_test_image(device)
@@ -100,13 +102,21 @@ if __name__ == "__main__":
     h, w, _ = image.shape
     fpn_strides = [4, 8, 16, 32, 64]
 
-    backbone = resnet_fpn_backbone('resnet18', pretrained=False, norm_layer=None, trainable_layers=5).to(device)
+    backbone = resnet_fpn_backbone(backbone_name='resnet18', weights=None, norm_layer=None, trainable_layers=5).to(device)
     backbone.train()
-    model = OrientedRCNN(backbone, {"head": {"num_classes":3}}).to(device)
+    model = OrientedRCNN(
+        backbone, 
+        {
+            "head": {
+                "num_classes": 3,
+                "out_channels": 256
+            }
+        }
+    ).to(device)
     model.train()
-    optimizer = torch.optim.Adam([
+    optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=1e-3)
+        ], lr=1e-4, momentum=0.9, weight_decay=0)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
     criterion = OrientedRCNNLoss(fpn_strides=fpn_strides)
 
@@ -117,8 +127,20 @@ if __name__ == "__main__":
 
     for e in range(epochs):
         optimizer.zero_grad()
-        out: OrientedRCNNOutput = model(tensor.to(device))
+        #with autograd.detect_anomaly():
+        #with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
+        #    with record_function("model_inference"):
+        #        out: OrientedRCNNOutput = model(tensor.to(device))
+        #    with record_function("loss_calc"):
+        #        rpn_loss, head_loss = criterion(out, annotation)
+        #        loss = rpn_loss.total_loss + head_loss.total_loss
+        #    with record_function("backward"):
+        #        loss.backward()
+        #    with record_function("optim"):
+        #        optimizer.step()
+        #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
 
+        out: OrientedRCNNOutput = model(tensor.to(device))
         rpn_loss, head_loss = criterion(out, annotation)
         loss = rpn_loss.total_loss + head_loss.total_loss
         loss.backward()
@@ -128,11 +150,11 @@ if __name__ == "__main__":
         if running_loss_rpn is None:
             running_loss_rpn = rpn_loss
         else:
-            running_loss_rpn = running_loss_rpn + rpn_loss.detach().clone()
+            running_loss_rpn = running_loss_rpn + rpn_loss
         if running_loss_head is None:
             running_loss_head = head_loss
         else:
-            running_loss_head = running_loss_head + head_loss.detach().clone()
+            running_loss_head = running_loss_head + head_loss
 
         scheduler.step()
         

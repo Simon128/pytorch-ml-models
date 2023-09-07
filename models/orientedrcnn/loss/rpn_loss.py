@@ -69,7 +69,7 @@ class RPNLoss(nn.Module):
             cls_loss = F.binary_cross_entropy_with_logits(
                 objectness_scores[i][sample_mask], 
                 cls_target[sample_mask], 
-                reduction='sum'
+                reduction='mean'
             )
             cls_losses.append(cls_loss)
 
@@ -80,7 +80,7 @@ class RPNLoss(nn.Module):
             relevant_pred = anchor_offsets[i][positives_idx[0]]
             relevant_anchor = anchors[i][positives_idx[0]]
             relevant_targets = encode(relevant_gt / stride, Encodings.VERTICES, Encodings.ANCHOR_OFFSET, relevant_anchor)
-            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_targets, reduction='sum')
+            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_targets, reduction='mean')
             regr_losses.append(regr_loss)
 
         regression_loss = torch.mean(torch.stack(regr_losses)) if len(regr_losses) > 0 else torch.tensor(0).to(anchors.device)

@@ -9,9 +9,9 @@ class RPNOutput:
 
 @dataclass
 class HeadOutput:
-    classification: torch.Tensor
-    boxes: torch.Tensor
-    rois: torch.Tensor
+    classification: list[torch.Tensor]
+    boxes: list[torch.Tensor]
+    rois: list[torch.Tensor]
 
 @dataclass
 class OrientedRCNNOutput:
@@ -25,20 +25,6 @@ class LossOutput:
     total_loss: torch.Tensor
     classification_loss: torch.Tensor
     regression_loss: torch.Tensor
-
-    def detach(self):
-        return LossOutput(
-            self.total_loss.detach(), 
-            self.classification_loss.detach(), 
-            self.regression_loss.detach()
-        )
-
-    def clone(self):
-        return LossOutput(
-            self.total_loss.clone(), 
-            self.classification_loss.clone(), 
-            self.regression_loss.clone()
-        )
 
     def __add__(self, o: 'LossOutput'):
         return LossOutput(
