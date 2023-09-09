@@ -4,15 +4,30 @@ from torchvision.ops import box_iou
 import torch.nn.functional as F
 import torch.nn as nn
 
-from .utils import relevant_samples_mask
 from ..utils import LossOutput, RPNOutput, Annotation, encode, Encodings
+from .sampler import BalancedSampler
 
 class RPNLoss(nn.Module):
-    def __init__(self, fpn_strides: list[int], n_samples = 256) -> None:
+    def __init__(
+            self, 
+            fpn_strides: list[int], 
+            n_samples = 256,
+            pos_fraction: float = 0.5, 
+            neg_thr: float = 0.3,
+            pos_thr: float = 0.7,
+            sample_max_inbetween_as_pos: bool = True
+        ) -> None:
         super().__init__()
         self.fpn_strides = fpn_strides
         self.n_samples = n_samples
         self.bce = nn.BCEWithLogitsLoss()
+        self.sampler = BalancedSampler(
+            n_samples=n_samples,
+            pos_fraction=pos_fraction,
+            neg_thr=neg_thr,
+            pos_thr=pos_thr,
+            sample_max_inbetween_as_pos=sample_max_inbetween_as_pos
+        )
 
     def forward(
             self, 
@@ -60,25 +75,40 @@ class RPNLoss(nn.Module):
 
         for i in range(len(targets)):
             iou = self.rpn_anchor_iou(anchors[i] * stride, targets[i])
-            sample_mask, positives_idx, _ = relevant_samples_mask(iou, self.n_samples)
+            pos_indices, neg_indices = self.sampler(iou)
+            # debug
+            #import cv2
+            #import numpy as np
+            #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif") # type:ignore
+            #vert_anchors = encode(anchors[i], Encodings.HBB_CENTERED, Encodings.HBB_VERTICES) * stride
+            #pos_anchors = vert_anchors[pos_indices[0]]
+            #neg_anchors = vert_anchors[neg_indices[0]]
+            #pos_img = image.copy()
+            #neg_img = image.copy()
+            #for a in pos_anchors:
+            #    anchor_pts = a.cpu().detach().numpy().astype(np.int32)
+            #    pos_img = cv2.polylines(pos_img, [anchor_pts], True, (0, 255, 0), 2) # type: ignore
+            #for a in neg_anchors:
+            #    anchor_pts = a.cpu().detach().numpy().astype(np.int32)
+            #    neg_img = cv2.polylines(neg_img, [anchor_pts], True, (0, 255, 0), 2) # type: ignore
+            #cv2.imwrite(f"pos_anchors_{stride}.png", pos_img) # type: ignore
+            #cv2.imwrite(f"neg_anchors_{stride}.png", neg_img) # type: ignore
 
             # objectness loss
-            cls_target = torch.zeros_like(objectness_scores[i])
-            cls_target[positives_idx[0]] = 1.0
-            sc_pred = torch.where(objectness_scores[i][sample_mask] == 0, 1e-7, objectness_scores[i][sample_mask])
-
-            cls_loss = self.bce(
-                sc_pred,
-                cls_target[sample_mask]
-            )
+            cls_targets = torch.zeros(len(pos_indices[0]) + len(neg_indices[0]), device=iou.device)
+            cls_targets[:len(pos_indices[0])] = 1.0
+            pred = torch.cat((objectness_scores[i][pos_indices[0]], objectness_scores[i][neg_indices[0]]), dim=0)
+            pred = torch.where(pred == 0, 1e-7, pred)
+            cls_loss = self.bce(pred, cls_targets)
             cls_losses.append(cls_loss)
 
             # regression loss
-            if len(positives_idx[0]) <= 0:
+            if len(pos_indices[0]) == 0:
                 continue
-            relevant_gt = targets[i][positives_idx[1]]
-            relevant_pred = anchor_offsets[i][positives_idx[0]]
-            relevant_anchor = anchors[i][positives_idx[0]]
+
+            relevant_gt = targets[i][pos_indices[1]]
+            relevant_pred = anchor_offsets[i][pos_indices[0]]
+            relevant_anchor = anchors[i][pos_indices[0]]
             relevant_targets = encode(relevant_gt / stride, Encodings.VERTICES, Encodings.ANCHOR_OFFSET, relevant_anchor)
             regr_loss = F.smooth_l1_loss(relevant_pred, relevant_targets, reduction='mean', beta=0.1111111111111)
             regr_losses.append(regr_loss)

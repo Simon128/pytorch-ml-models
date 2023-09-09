@@ -4,13 +4,27 @@ import torch.nn.functional as F
 
 from ..ops import pairwise_iou_rotated
 from ..utils import encode, Encodings, HeadOutput, Annotation, LossOutput
-from .utils import relevant_samples_mask
+from .sampler import BalancedSampler
 
 class HeadLoss(nn.Module):
-    def __init__(self, n_samples: int = 256) -> None:
+    def __init__(
+            self, 
+            n_samples: int = 256,
+            pos_fraction: float = 0.5,
+            neg_thr: float = 0.5,
+            pos_thr: float = 0.5,
+            sample_max_inbetween_as_pos: bool = False
+        ) -> None:
         super().__init__()
         self.n_samples = n_samples
         self.ce = nn.CrossEntropyLoss()
+        self.sampler = BalancedSampler(
+            n_samples=n_samples,
+            pos_fraction=pos_fraction,
+            neg_thr=neg_thr,
+            pos_thr=pos_thr,
+            sample_max_inbetween_as_pos=sample_max_inbetween_as_pos
+        )
 
     def forward(
             self,
@@ -29,25 +43,24 @@ class HeadLoss(nn.Module):
 
         for b in range(batch_size):
             box_targets = encode(regression_targets[b], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
-            #hbb_pred = encode(rois[b], Encodings.ORIENTED_CV2_FORMAT, Encodings.HBB_CORNERS)
-            #hbb_targets = encode(regression_targets[b], Encodings.VERTICES, Encodings.HBB_CORNERS)
 
             iou = pairwise_iou_rotated(rois[b], box_targets)
-            sample_mask, positives_idx, _ = relevant_samples_mask(iou, self.n_samples, True)
-
+            pos_indices, neg_indices = self.sampler(iou)
             background_cls = class_pred[b].shape[-1] - 1
-            cls_target = torch.full([len(class_pred[b])], background_cls).to(class_pred[b].device)
-            if len(positives_idx[0]) > 0:
-                cls_target[positives_idx[0]] = classification_targets[b][positives_idx[1]]
 
-            cls_loss = self.ce(class_pred[b][sample_mask], cls_target[sample_mask].to(torch.long))
+            # classification loss
+            cls_targets = torch.full((len(pos_indices[0]) + len(neg_indices[0]),), background_cls, device=iou.device)
+            cls_targets[:len(pos_indices[0])] = classification_targets[b][pos_indices[1]]
+            pred = torch.cat((class_pred[b][pos_indices[0]], class_pred[b][neg_indices[0]]), dim=0)
+            pred = torch.where(pred == 0, 1e-7, pred)
+            cls_loss = self.ce(pred, cls_targets.to(torch.long))
             cls_losses.append(cls_loss.reshape(1))
 
-            if len(positives_idx[0]) <= 0:
+            if len(pos_indices[0]) <= 0:
                 continue
 
-            relevant_gt = box_targets[positives_idx[1]]
-            relevant_pred = box_pred[b][positives_idx[0]]
+            relevant_gt = box_targets[pos_indices[1]]
+            relevant_pred = box_pred[b][pos_indices[0]]
             regr_loss = F.smooth_l1_loss(relevant_pred, relevant_gt, reduction='mean')
             regr_losses.append(regr_loss.reshape(1))
 

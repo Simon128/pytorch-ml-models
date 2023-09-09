@@ -51,7 +51,7 @@ def visualize_rpn_predictions(
         objectness = rpn_out[k].objectness_scores[0] 
         anchors = all_anchors[k][0] 
         mask = torch.sigmoid(objectness) > 0.7
-        k = min(mask.count_nonzero().item(), 100)
+        k = min(mask.count_nonzero().item(), 10)
         thr_objectness = objectness[mask]
         thr_regression = regression[mask]
         thr_anchors = anchors[mask]
@@ -61,7 +61,7 @@ def visualize_rpn_predictions(
         top_boxes = encode(top_regr, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, top_anchors) * stride
         top_anchors_vertices = encode(top_anchors, Encodings.HBB_CENTERED, Encodings.HBB_VERTICES) * stride
 
-        thickness = 1
+        thickness = 2
         isClosed = True
         pred_color = (0, 0, 255)
         a_color = (0, 255, 0)
@@ -122,7 +122,7 @@ if __name__ == "__main__":
                 "num_classes": 3,
                 "out_channels": 1024,
                 "inject_annotation": True,
-                "n_injected_samples": 50
+                "n_injected_samples": 500
             }
         }
     ).to(device)
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
 
         #with autograd.detect_anomaly():
-        out: OrientedRCNNOutput = model(tensor.to(device), annotation)
+        out: OrientedRCNNOutput = model(tensor.to(device), annotation, e)
         rpn_loss, head_loss = criterion(out, annotation)
         loss = rpn_loss.total_loss + head_loss.total_loss
         loss.backward()

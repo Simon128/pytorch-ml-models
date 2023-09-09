@@ -164,7 +164,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                     result[k]["vertices"][b, -n_samples:] = boxes
             else:
                 result[k]["vertices"] = lve
-                result[k]["objectness"] = rpn_proposals[k].objectness_scores.detach().clone
+                result[k]["objectness"] = rpn_proposals[k].objectness_scores.detach().clone()
 
         for test_i , (k, v) in enumerate(result.items()):
             b = result[k]["objectness"].shape[0]
