@@ -134,8 +134,10 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         # transform proposals to vertices
         for i, k in enumerate(rpn_proposals.keys()):
             result[k] = dict()
+            # detach rpn proposals to prevent
+            # gradient of head to flow back to RPN specific layers
             lve = encode(
-                rpn_proposals[k].anchor_offsets,
+                rpn_proposals[k].anchor_offsets.detach().clone(),
                 Encodings.ANCHOR_OFFSET,
                 Encodings.VERTICES,
                 anchors[k],
@@ -150,7 +152,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                 shape[1] = n_samples
                 result[k]["objectness"] = torch.cat(
                     (
-                        rpn_proposals[k].objectness_scores, 
+                        rpn_proposals[k].objectness_scores.detach().clone(), 
                         # 100 for sigmoid -> close to 1
                         torch.full(shape, 10000, dtype=torch.float).to(rpn_proposals[k].objectness_scores.device)
                     ),
@@ -162,9 +164,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                     result[k]["vertices"][b, -n_samples:] = boxes
             else:
                 result[k]["vertices"] = lve
-                result[k]["objectness"] = rpn_proposals[k].objectness_scores
+                result[k]["objectness"] = rpn_proposals[k].objectness_scores.detach().clone
 
-        # parallelogram to rectangular proposals to cv2_format (center_x, center_y, width, height, theta (rad))
         for test_i , (k, v) in enumerate(result.items()):
             b = result[k]["objectness"].shape[0]
             cv2_format = encode(v["vertices"], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
@@ -232,6 +233,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         merged_features = {b: [] for b in range(num_batches)}
         merged_boxes = {b: [] for b in range(num_batches)}
         merged_scores = {b: [] for b in range(num_batches)}
+        merged_strides = {b: [] for b in range(num_batches)}
 
         for s_idx, k in enumerate(cv2_format.keys()):
             roi_align = super().forward(fpn_features[k], cv2_format[k]["boxes"])
@@ -247,27 +249,32 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
             for batch_idx in batched_boxes.keys():
                 boxes = torch.stack(batched_boxes[batch_idx], dim=0)
-                boxes[..., :-1] = boxes[..., :-1] * self.fpn_strides[s_idx]
+                #boxes[..., :-1] = boxes[..., :-1] * self.fpn_strides[s_idx]
+                merged_strides[batch_idx].append(torch.full_like(boxes, self.fpn_strides[s_idx]))
                 merged_boxes[batch_idx].append(boxes)
                 merged_scores[batch_idx].append(cv2_format[k]["scores"][batch_idx])
 
         for b in range(num_batches):
             merged_features[b] = torch.stack(merged_features[b], dim=0)
             merged_boxes[b] = torch.cat(merged_boxes[b], dim=0)
+            merged_strides[b] = torch.cat(merged_strides[b], dim=0)
             merged_scores[b] = torch.cat(merged_scores[b], dim=0)
 
         filtered_features = []
         filtered_boxes = []
         filtered_scores = []
+        filtered_strides = []
         for b in range(num_batches):
             topk_k = min(1000, len(merged_scores[b]))
             keep = torch.topk(merged_scores[b], k=topk_k).indices
             filtered_features.append(merged_features[b][keep])
             filtered_boxes.append(merged_boxes[b][keep])
             filtered_scores.append(merged_scores[b][keep])
+            filtered_strides.append(merged_strides[b][keep])
 
         return {
             "features": torch.stack(filtered_features, dim=0), 
             "boxes": torch.stack(filtered_boxes, dim=0), 
-            "scores": torch.stack(filtered_scores, dim=0)
+            "scores": torch.stack(filtered_scores, dim=0),
+            "strides": torch.stack(filtered_strides, dim=0)
         }

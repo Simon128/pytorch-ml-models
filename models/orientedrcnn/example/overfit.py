@@ -30,8 +30,8 @@ def load_test_annotation(device: torch.device):
         ground_truth["boxes"] = torch.tensor(ground_truth["boxes"])[:, :4]
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
-    boxes = ground_truth["boxes"][None, None].to(device).to(torch.float)
-    labels = ground_truth["labels"][None, None].to(device).to(torch.int64)
+    boxes = ground_truth["boxes"][None].to(device).to(torch.float)
+    labels = ground_truth["labels"][None].to(device).to(torch.int64)
     return Annotation(boxes=boxes, classifications=labels)
 
 def visualize_rpn_predictions(
@@ -122,7 +122,7 @@ if __name__ == "__main__":
                 "num_classes": 3,
                 "out_channels": 1024,
                 "inject_annotation": True,
-                "n_injected_samples": 100
+                "n_injected_samples": 50
             }
         }
     ).to(device)
