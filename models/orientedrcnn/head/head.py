@@ -1,30 +1,36 @@
 import torch
 import torch.nn as nn
 from collections import OrderedDict
+from typing import Tuple
 
-from ..data_formats import HeadOutput
-
+from ..utils import HeadOutput, normalize, encode, Encodings
 from .roi_align_rotated import RoIAlignRotatedWrapper
-from ..nms_rotated import nms_rotated
+from ..ops import nms_rotated
 
 class OrientedRCNNHead(nn.Module):
-    def __init__(self, cfg: dict = {}):
+    def __init__(
+            self, 
+            in_channels: int = 256, 
+            fpn_strides: list = [4, 8, 16, 32, 64],
+            out_channels: int = 1024,
+            num_classes: int = 10,
+            roi_align_size: Tuple[int, int] = (7,7),
+            roi_align_sampling_ratio: int = 2,
+            inject_annotation: bool = False,
+            n_injected_samples: int = 1000
+        ):
         super().__init__()
-        if cfg is None:
-            cfg = {}
-
-        in_channels = cfg.get("in_channels", 256)
-        self.fpn_strides = cfg.get("fpn_strides", [4, 8, 16, 32, 64])
-        out_channels = cfg.get("out_channels", 1024)
-        self.num_classes = cfg.get("num_classes", 10)
-        roi_align_size = cfg.get("roi_align_size", (7,7))
-        roi_align_sampling_ratio = cfg.get("roi_align_sampling_ratio", 4)
+        self.fpn_strides = fpn_strides
+        self.num_classes = num_classes
+        self.fpn_strides = fpn_strides
 
         self.roi_align_rotated = RoIAlignRotatedWrapper(
             roi_align_size, 
             spatial_scale = 1, 
             sampling_ratio = roi_align_sampling_ratio,
-            fpn_strides=self.fpn_strides
+            fpn_strides=self.fpn_strides,
+            inject_annotation=inject_annotation,
+            n_injected_samples=n_injected_samples
         )
         self.fc = nn.Sequential(
             nn.Flatten(start_dim=2),
@@ -38,17 +44,38 @@ class OrientedRCNNHead(nn.Module):
         # note: we predict x, y, w, h, theta instead of the midpoint offset thingy
         # as shown in figure 2 of the paper
         self.regression = nn.Sequential(
-            nn.Linear(out_channels, 5)
+            nn.Linear(out_channels, 5),
         )
 
-    def forward(self, proposals: OrderedDict, fpn_feat: OrderedDict, anchors: OrderedDict):
-        x = self.roi_align_rotated(fpn_feat, proposals, anchors)
+    def forward(
+            self, 
+            proposals: OrderedDict, 
+            fpn_feat: OrderedDict, 
+            anchors: OrderedDict, 
+            ground_truth: list[torch.Tensor] | torch.Tensor | None = None,
+            reduce_injected_samples: int = 0
+        ):
+        x = self.roi_align_rotated(fpn_feat, proposals, anchors, ground_truth, reduce_injected_samples)
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
-        # this needs to be changed
-        boxes = x["boxes"] + regression
+        # bring regression results to reasonable mean and std
+        regression = normalize(
+            regression, 
+            target_mean=[0.0] * 5,
+            target_std=[0.1, 0.1, 0.2, 0.2, 0.1],
+            dim=-2
+        )
         rois = x["boxes"]
+
+        # see https://arxiv.org/pdf/1311.2524.pdf
+        boxes_x = x["boxes"][..., 2] * regression[..., 0] + x["boxes"][..., 0]
+        boxes_y = x["boxes"][..., 3] * regression[..., 1] + x["boxes"][..., 1]
+        boxes_w = x["boxes"][..., 2] * torch.exp(regression[..., 2])
+        boxes_h = x["boxes"][..., 3] * torch.exp(regression[..., 3])
+        # not sure what to do with angles
+        boxes_a = x["boxes"][..., 4] * torch.exp(regression[..., 4])
+        boxes = torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1)
 
         if not self.training:
             # see section 3.3 of the paper
@@ -64,7 +91,7 @@ class OrientedRCNNHead(nn.Module):
                     if len(thr_boxes) == 0:
                         keep.append(torch.empty(0, dtype=torch.int64).to(boxes.device))
                         continue
-                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1)
+                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
                     keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
                 keep = torch.cat(keep, dim=0)

@@ -1,7 +1,7 @@
 import unittest
 import torch
 import numpy as np
-from .. import encodings
+from ..utils import encodings # type: ignore
 
 class TestRPNEncodings(unittest.TestCase):
     @classmethod

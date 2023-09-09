@@ -1,8 +1,6 @@
 import unittest
 import torch
-from collections import OrderedDict
-
-from ..oriented_rpn import FPNAnchorGenerator
+from ..rpn import FPNAnchorGenerator
 
 class TestAnchorGenerator(unittest.TestCase):
     @classmethod

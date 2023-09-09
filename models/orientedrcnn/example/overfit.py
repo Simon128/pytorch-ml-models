@@ -7,10 +7,9 @@ import json
 import math
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torch.profiler import profile, record_function, ProfilerActivity
+from torch.utils.tensorboard import SummaryWriter
 
-from ..data_formats import Annotation, OrientedRCNNOutput, LossOutput
-from ..encoder import encode, Encodings
-
+from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
 from ..model import OrientedRCNN
 from ..loss import OrientedRCNNLoss
 
@@ -18,6 +17,10 @@ def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
     image = cv2.imread(os.path.join(dir, "image.tif"), cv2.IMREAD_UNCHANGED) # type: ignore
     tensor = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0)[:, :3, :, :] / 255
+    b, c, h, w = tensor.shape
+    mean = torch.mean(tensor.flatten(-2), dim=-1)
+    std = torch.std(tensor.flatten(-2), dim=-1)
+    tensor = (tensor - mean[..., None, None].repeat((1, 1, h, w))) / std[..., None, None].repeat((1, 1, h, w))
     return image, tensor.to(device)
 
 def load_test_annotation(device: torch.device):
@@ -27,15 +30,16 @@ def load_test_annotation(device: torch.device):
         ground_truth["boxes"] = torch.tensor(ground_truth["boxes"])[:, :4]
         ground_truth["labels"] = torch.tensor(ground_truth["labels"], dtype=torch.float)
 
-    boxes = ground_truth["boxes"].unsqueeze(0).to(device).to(torch.float)
-    labels = ground_truth["labels"].unsqueeze(0).to(device).to(torch.int64)
+    boxes = ground_truth["boxes"][None, None].to(device).to(torch.float)
+    labels = ground_truth["labels"][None, None].to(device).to(torch.int64)
     return Annotation(boxes=boxes, classifications=labels)
 
 def visualize_rpn_predictions(
         image: np.ndarray, 
         prediction: OrientedRCNNOutput, 
         index: int,
-        fpn_strides: list[int]
+        fpn_strides: list[int],
+        writer: SummaryWriter
     ):
     rpn_out = prediction.rpn_output
     all_anchors = prediction.anchors
@@ -46,7 +50,7 @@ def visualize_rpn_predictions(
         regression = rpn_out[k].anchor_offsets[0] 
         objectness = rpn_out[k].objectness_scores[0] 
         anchors = all_anchors[k][0] 
-        mask = torch.sigmoid(objectness) > 0.8
+        mask = torch.sigmoid(objectness) > 0.7
         k = min(mask.count_nonzero().item(), 100)
         thr_objectness = objectness[mask]
         thr_regression = regression[mask]
@@ -66,59 +70,68 @@ def visualize_rpn_predictions(
             pts_pred = o.cpu().detach().numpy().astype(np.int32)
             curr_image = cv2.polylines(curr_image, [pts_pred], isClosed, pred_color, thickness) # type: ignore
 
-        for a in top_anchors_vertices:
-            anchor_pts = a.cpu().detach().numpy().astype(np.int32)
-            curr_image = cv2.polylines(curr_image, [anchor_pts], isClosed, a_color, thickness) # type: ignore
+        #for a in top_anchors_vertices:
+        #    anchor_pts = a.cpu().detach().numpy().astype(np.int32)
+        #    curr_image = cv2.polylines(curr_image, [anchor_pts], isClosed, a_color, thickness) # type: ignore
 
         image_grid = np.concatenate((image_grid, curr_image), axis=1)
 
-    cv2.imwrite(f"rpn_{index}.png", image_grid) # type: ignore
+    writer.add_image('rpn', torch.tensor(image_grid).permute((2, 0, 1))/255, index)
 
-def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int):
+def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int, writer: SummaryWriter):
     image_clone = image.copy()
     _cls = prediction.head_output.classification[0]
-    mask = torch.sigmoid(_cls[..., -1]) < 0.2
-    k = min(mask.count_nonzero().item(), 100)
-    thr_cls = _cls[mask]
-    thr_regression = prediction.head_output.boxes[0][mask]
-    top_idx = torch.topk(thr_cls[..., -1], k=int(k), largest=False).indices
-    top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
-    top_boxes = top_boxes.detach().clone().cpu().numpy()
+    _b = prediction.head_output.boxes[0]
+    for c in range(_cls.shape[-1]):
+        mask = torch.sigmoid(_cls[..., c]) > 0.5
+        thr_cls = _cls[mask]
+        thr_regression = _b[mask]
+        k = min(len(thr_cls), 20)
+        top_idx = torch.topk(thr_cls[..., c], k=int(k)).indices
+        top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
+        top_boxes = top_boxes.detach().clone().cpu().numpy()
 
-    for box in top_boxes:
-        rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item() * 180 / math.pi)
-        pts = cv2.boxPoints(rot) # type: ignore
-        pts = np.int0(pts) # type: ignore
-        image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
+        for box in top_boxes:
+            rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item() * 180 / math.pi)
+            pts = cv2.boxPoints(rot) # type: ignore
+            pts = np.intp(pts) 
+            image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 2) # type: ignore
 
-    cv2.imwrite(f"head_{index}.png", image_clone) # type: ignore
-
+        writer.add_image(f'class {c}/head', torch.tensor(image_clone).permute((2, 0, 1))/255, index)
 
 if __name__ == "__main__":
     device = torch.device("cuda")
     image, tensor = load_test_image(device)
     annotation = load_test_annotation(device)
+    writer = SummaryWriter()
 
     h, w, _ = image.shape
     fpn_strides = [4, 8, 16, 32, 64]
 
-    backbone = resnet_fpn_backbone(backbone_name='resnet18', weights=None, norm_layer=None, trainable_layers=5).to(device)
+    backbone = resnet_fpn_backbone(
+        backbone_name='resnet18', 
+        weights=None, 
+        trainable_layers=5,
+        norm_layer=None
+    ).to(device)
     backbone.train()
     model = OrientedRCNN(
         backbone, 
         {
             "head": {
                 "num_classes": 3,
-                "out_channels": 256
+                "out_channels": 1024,
+                "inject_annotation": True,
+                "n_injected_samples": 100
             }
         }
     ).to(device)
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=1e-4, momentum=0.9, weight_decay=0)
+        ], lr=1e-3, momentum=0., weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
-    criterion = OrientedRCNNLoss(fpn_strides=fpn_strides)
+    criterion = OrientedRCNNLoss(fpn_strides=fpn_strides, n_samples=256)
 
     running_loss_rpn: LossOutput | None = None
     running_loss_head: LossOutput | None = None
@@ -127,7 +140,6 @@ if __name__ == "__main__":
 
     for e in range(epochs):
         optimizer.zero_grad()
-        #with autograd.detect_anomaly():
         #with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
         #    with record_function("model_inference"):
         #        out: OrientedRCNNOutput = model(tensor.to(device))
@@ -140,42 +152,24 @@ if __name__ == "__main__":
         #        optimizer.step()
         #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
 
-        out: OrientedRCNNOutput = model(tensor.to(device))
+        #with autograd.detect_anomaly():
+        out: OrientedRCNNOutput = model(tensor.to(device), annotation)
         rpn_loss, head_loss = criterion(out, annotation)
         loss = rpn_loss.total_loss + head_loss.total_loss
         loss.backward()
         optimizer.step()
         running_loss_total += loss.item()
-
-        if running_loss_rpn is None:
-            running_loss_rpn = rpn_loss
-        else:
-            running_loss_rpn = running_loss_rpn + rpn_loss
-        if running_loss_head is None:
-            running_loss_head = head_loss
-        else:
-            running_loss_head = running_loss_head + head_loss
+        rpn_loss.to_writer(writer, "rpn", e)
+        head_loss.to_writer(writer, "head", e)
 
         scheduler.step()
         
         if e % 10 == 0:
-            if running_loss_rpn is None or running_loss_head is None:
-                break
-            running_loss_rpn.total_loss /= 10
-            running_loss_rpn.classification_loss /= 10
-            running_loss_rpn.regression_loss /= 10
-            running_loss_head.total_loss /= 10
-            running_loss_head.classification_loss /= 10
-            running_loss_head.regression_loss /= 10
-            print(f"Epoch: {e} [{running_loss_total / 10}]")
-            print("RPN losses")
-            print(running_loss_rpn)
-            print("HEAD losses")
-            print(running_loss_head)
-            running_loss_rpn = None
-            running_loss_head = None
+            print(f"Epoch: {e} [{running_loss_total / 10.0}]")
             running_loss_total = 0.0
 
         if e % 100 == 0:
-            visualize_rpn_predictions(image, out, e, fpn_strides)
-            visualize_head_predictions(image, out, e)
+            visualize_rpn_predictions(image, out, e, fpn_strides, writer)
+            visualize_head_predictions(image, out, e, writer)
+
+    writer.close()

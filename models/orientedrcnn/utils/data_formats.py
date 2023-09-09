@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import OrderedDict
 import torch
+from torch.utils.tensorboard.writer import SummaryWriter
 
 @dataclass
 class RPNOutput:
@@ -10,7 +11,7 @@ class RPNOutput:
 @dataclass
 class HeadOutput:
     classification: list[torch.Tensor]
-    boxes: list[torch.Tensor]
+    boxes: torch.Tensor | list[torch.Tensor]
     rois: list[torch.Tensor]
 
 @dataclass
@@ -22,9 +23,9 @@ class OrientedRCNNOutput:
 
 @dataclass
 class LossOutput:
-    total_loss: torch.Tensor
-    classification_loss: torch.Tensor
-    regression_loss: torch.Tensor
+    total_loss: float | torch.Tensor
+    classification_loss: float | torch.Tensor
+    regression_loss: float | torch.Tensor
 
     def __add__(self, o: 'LossOutput'):
         return LossOutput(
@@ -32,6 +33,11 @@ class LossOutput:
             classification_loss=self.classification_loss + o.classification_loss,
             regression_loss=self.regression_loss + o.regression_loss
         )
+
+    def to_writer(self, writer: SummaryWriter, pre_tag: str, step: int):
+        writer.add_scalar(f"{pre_tag}/total_loss", self.total_loss, step)
+        writer.add_scalar(f"{pre_tag}/classification_loss", self.classification_loss, step)
+        writer.add_scalar(f"{pre_tag}/regression_loss", self.regression_loss, step)
 
     def __str__(self):
         return \

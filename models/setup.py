@@ -13,7 +13,7 @@ requirements = ["torch", "torchvision"]
 # python setup.py build_ext --inplace
 def get_extensions():
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    extensions_dir = os.path.join(this_dir,"orientedrcnn", "ext")
+    extensions_dir = os.path.join(this_dir, "orientedrcnn", "ext")
 
     main_file = os.path.join(extensions_dir, "vision.cpp")
     source_cpu = glob.glob(os.path.join(extensions_dir, "**", "*.cpp"))
@@ -58,11 +58,11 @@ def get_extensions():
 
 setup(
     name="orientedrcnn",
-    # version="0.1",
-    # author="fmassa",
-    # url="https://github.com/facebookresearch/maskrcnn-benchmark",
     packages=find_packages(exclude=("configs", "tests",)),
-    # install_requires=requirements,
+    install_requires=[
+        "opencv-python==4.7.0.72",
+        "tensorboard"
+    ],
     ext_modules=get_extensions(),
     cmdclass={"build_ext": torch.utils.cpp_extension.BuildExtension},
 )

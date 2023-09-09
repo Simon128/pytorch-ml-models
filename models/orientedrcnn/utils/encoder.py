@@ -16,7 +16,8 @@ def encode(
         data: torch.Tensor, 
         src_encoding: Encodings, 
         target_encoding: Encodings,
-        anchors: torch.Tensor | None = None 
+        anchors: torch.Tensor | None = None,
+     
     ):
     src_encoder = Encoder(data, src_encoding, anchors)
     trgt_encoder = src_encoder.encode(target_encoding)
@@ -27,7 +28,7 @@ class Encoder:
             self, 
             data: torch.Tensor, 
             encoding: Encodings,
-            anchors: torch.Tensor | None = None 
+            anchors: torch.Tensor | None = None
         ):
         assert encoding in \
             [Encodings.VERTICES, Encodings.ANCHOR_OFFSET, Encodings.MIDPOINT_OFFSET, 
@@ -292,6 +293,8 @@ class Encoder:
         return torch.stack((v1, v2, v3, v4), dim=-2).float()
 
     def __vertices_to_midpoint_offset(self, vertices: torch.Tensor):
+        tl = self.__get_top_left_vertices(vertices)
+        tr = self.__get_top_right_vertices(vertices)
         x_min = torch.min(vertices[..., 0], dim=-1)[0]
         x_max = torch.max(vertices[..., 0], dim=-1)[0]
         y_min = torch.min(vertices[..., 1], dim=-1)[0]
@@ -300,8 +303,8 @@ class Encoder:
         h = y_max - y_min
         x_center = x_min + w / 2
         y_center = y_min + h / 2
-        delta_a = vertices[..., 0, 0] - x_center
-        delta_b = vertices[..., 1, 1] - y_center
+        delta_a = tl[..., 0, 0] - x_center
+        delta_b = tr[..., 0, 1] - y_center
         return torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=-1)
 
     def __get_top_left_vertices(self, vertices: torch.Tensor):

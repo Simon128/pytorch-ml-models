@@ -1,16 +1,15 @@
-from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from collections import OrderedDict
-from ..data_formats import *
+from ..utils import RPNOutput, normalize
 
 
 class OrientedRPN(nn.Module):
-    def __init__(self, cfg: dict = {}):
+    def __init__(self, fpn_level_num = 5, fpn_channels = 256, num_anchors = 3):
         super().__init__()
-        self.fpn_level_num = cfg.get("fpn_level_num", 5)
-        self.fpn_channels = cfg.get("fpn_channels", 256)
-        self.num_anchors = cfg.get("num_anchors", 3)
+        self.fpn_level_num = fpn_level_num
+        self.fpn_channels = fpn_channels
+        self.num_anchors = num_anchors
 
         self.conv = nn.ModuleDict(
             {str(i): nn.Conv2d(self.fpn_channels, 256, 3, 1, "same") for i in range(self.fpn_level_num)}
@@ -29,6 +28,13 @@ class OrientedRPN(nn.Module):
         anchor_offsets = anchor_offsets.reshape((b, self.num_anchors, -1, h, w))
         anchor_offsets = torch.movedim(anchor_offsets, 2, -1)
         anchor_offsets = anchor_offsets.flatten(1, -2)
+        # normalize the anchor offsets to a reasonable mean and std
+        anchor_offsets = normalize(
+            anchor_offsets, 
+            target_mean=[0.0] * 6,
+            target_std=[1.0, 1.0, 1.0, 1.0, 0.5, 0.5],
+            dim=-2
+        )
         objectness_scores = self.objectness_branch[fpn_level](x)
         objectness_scores = objectness_scores.flatten(1)
         return RPNOutput(anchor_offsets=anchor_offsets, objectness_scores=objectness_scores)

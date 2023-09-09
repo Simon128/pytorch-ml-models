@@ -1,8 +1,12 @@
 import torch
 
-def relevant_samples_mask(iou: torch.Tensor, n_samples: int):
-    positives = get_positives_mask(iou)
-    negatives = get_negatives_mask(iou)
+def relevant_samples_mask(iou: torch.Tensor, n_samples: int, simple: bool = False):
+    if simple:
+        positives = get_positives_mask_simple(iou)
+        negatives = get_negatives_mask_simple(iou)
+    else:
+        positives = get_positives_mask(iou)
+        negatives = get_negatives_mask(iou)
     positives_idx = torch.nonzero(positives, as_tuple=True)
     negatives_idx = torch.nonzero(negatives, as_tuple=True)
     positive_samples, negative_samples = random_sample(positives_idx[0], negatives_idx[0], n_samples)
@@ -48,7 +52,14 @@ def get_positives_mask(iou_matrix: torch.Tensor):
     positives = above_07 | between
     return positives == 1
 
+def get_positives_mask_simple(iou_matrix: torch.Tensor):
+    return iou_matrix > 0.5
+
 def get_negatives_mask(iou_matrix: torch.Tensor):
     # iou < 0.3 -> negative
     # iou is a MxN matrix: M = num of anchors, N = num of ground truth
     return iou_matrix < 0.3
+
+def get_negatives_mask_simple(iou_matrix: torch.Tensor):
+    return iou_matrix < 0.5
+

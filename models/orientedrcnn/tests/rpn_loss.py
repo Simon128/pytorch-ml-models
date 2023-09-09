@@ -1,8 +1,7 @@
 import unittest
 import torch
 import torch.nn.functional as F
-import numpy as np
-from ..oriented_rpn import loss
+from ..rpn import loss # type:ignore
 
 class TestRPNLoss(unittest.TestCase):
     @classmethod

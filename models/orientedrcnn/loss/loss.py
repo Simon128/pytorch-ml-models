@@ -1,10 +1,8 @@
-import torch
 import torch.nn as nn
-from typing import OrderedDict
 
 from .rpn_loss import RPNLoss
 from .head_loss import HeadLoss
-from ..data_formats import OrientedRCNNOutput, Annotation
+from ..utils import OrientedRCNNOutput, Annotation
 
 class OrientedRCNNLoss(nn.Module):
     def __init__(self, fpn_strides: list[int], n_samples = 256) -> None:

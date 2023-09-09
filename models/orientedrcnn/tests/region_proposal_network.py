@@ -2,7 +2,7 @@ import unittest
 import torch
 from collections import OrderedDict
 
-from ..oriented_rpn import OrientedRPN
+from ..rpn import OrientedRPN
 
 class TestRPN(unittest.TestCase):
     @classmethod
@@ -10,7 +10,7 @@ class TestRPN(unittest.TestCase):
         cfg = {
 
                 }
-        cls.RPN = OrientedRPN(cfg)
+        cls.RPN = OrientedRPN(**cfg)
         b = 4
         c = 256
         h, w = 256, 256

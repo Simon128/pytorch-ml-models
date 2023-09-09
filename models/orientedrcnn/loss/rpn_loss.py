@@ -5,14 +5,14 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 from .utils import relevant_samples_mask
-from ..data_formats import LossOutput, RPNOutput, Annotation
-from ..encoder import encode, Encodings
+from ..utils import LossOutput, RPNOutput, Annotation, encode, Encodings
 
 class RPNLoss(nn.Module):
     def __init__(self, fpn_strides: list[int], n_samples = 256) -> None:
         super().__init__()
         self.fpn_strides = fpn_strides
         self.n_samples = n_samples
+        self.bce = nn.BCEWithLogitsLoss()
 
     def forward(
             self, 
@@ -32,9 +32,9 @@ class RPNLoss(nn.Module):
             if aggregated_loss is None:
                 aggregated_loss = loss
             else:
-                aggregated_loss.classification_loss += loss.classification_loss
-                aggregated_loss.regression_loss += loss.regression_loss
-                aggregated_loss.total_loss += loss.total_loss
+                aggregated_loss.classification_loss = aggregated_loss.classification_loss + loss.classification_loss
+                aggregated_loss.regression_loss = aggregated_loss.regression_loss + loss.regression_loss 
+                aggregated_loss.total_loss = aggregated_loss.total_loss + loss.total_loss
 
         return aggregated_loss
 
@@ -50,7 +50,7 @@ class RPNLoss(nn.Module):
             annotation: Annotation,
             stride: float = 1.0
         ):
-        anchor_offsets = prediction.anchor_offsets 
+        anchor_offsets = prediction.anchor_offsets
         objectness_scores = prediction.objectness_scores
         anchors = anchors
         targets = annotation.boxes
@@ -65,11 +65,11 @@ class RPNLoss(nn.Module):
             # objectness loss
             cls_target = torch.zeros_like(objectness_scores[i])
             cls_target[positives_idx[0]] = 1.0
+            sc_pred = torch.where(objectness_scores[i][sample_mask] == 0, 1e-7, objectness_scores[i][sample_mask])
 
-            cls_loss = F.binary_cross_entropy_with_logits(
-                objectness_scores[i][sample_mask], 
-                cls_target[sample_mask], 
-                reduction='mean'
+            cls_loss = self.bce(
+                sc_pred,
+                cls_target[sample_mask]
             )
             cls_losses.append(cls_loss)
 
@@ -80,7 +80,7 @@ class RPNLoss(nn.Module):
             relevant_pred = anchor_offsets[i][positives_idx[0]]
             relevant_anchor = anchors[i][positives_idx[0]]
             relevant_targets = encode(relevant_gt / stride, Encodings.VERTICES, Encodings.ANCHOR_OFFSET, relevant_anchor)
-            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_targets, reduction='mean')
+            regr_loss = F.smooth_l1_loss(relevant_pred, relevant_targets, reduction='mean', beta=0.1111111111111)
             regr_losses.append(regr_loss)
 
         regression_loss = torch.mean(torch.stack(regr_losses)) if len(regr_losses) > 0 else torch.tensor(0).to(anchors.device)
