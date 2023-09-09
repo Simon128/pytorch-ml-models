@@ -8,10 +8,39 @@ import math
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torch.profiler import profile, record_function, ProfilerActivity
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
 
 from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
 from ..model import OrientedRCNN
 from ..loss import OrientedRCNNLoss
+
+def plot_grad_flow(named_parameters):
+    '''Plots the gradients flowing through different layers in the net during training.
+    Can be used for checking for possible gradient vanishing / exploding problems.
+    
+    Usage: Plug this function in Trainer class after loss.backwards() as 
+    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+    ave_grads = []
+    max_grads= []
+    layers = []
+    for n, p in named_parameters:
+        if(p.requires_grad) and ("bias" not in n):
+            layers.append(n)
+            ave_grads.append(p.grad.abs().mean().item())
+            max_grads.append(p.grad.abs().max().item())
+    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
+    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(left=0, right=len(ave_grads))
+    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+    plt.xlabel("Layers")
+    plt.ylabel("average gradient")
+    plt.title("Gradient flow")
+    plt.grid(True)
+    plt.legend([Line2D([0], [0], color="c", lw=4),
+                Line2D([0], [0], color="b", lw=4),
+                Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
 
 def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
@@ -83,9 +112,8 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
     _cls = prediction.head_output.classification[0]
     _b = prediction.head_output.boxes[0]
     for c in range(_cls.shape[-1]):
-        mask = torch.sigmoid(_cls[..., c]) > 0.5
-        thr_cls = _cls[mask]
-        thr_regression = _b[mask]
+        thr_cls = _cls
+        thr_regression = _b
         k = min(len(thr_cls), 20)
         top_idx = torch.topk(thr_cls[..., c], k=int(k)).indices
         top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
@@ -153,7 +181,7 @@ if __name__ == "__main__":
         #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
 
         #with autograd.detect_anomaly():
-        out: OrientedRCNNOutput = model(tensor.to(device), annotation, e)
+        out: OrientedRCNNOutput = model(tensor.to(device), annotation)
         rpn_loss, head_loss = criterion(out, annotation)
         loss = rpn_loss.total_loss + head_loss.total_loss
         loss.backward()

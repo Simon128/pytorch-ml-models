@@ -28,7 +28,7 @@ class OrientedRCNNHead(nn.Module):
             roi_align_size, 
             spatial_scale = 1, 
             sampling_ratio = roi_align_sampling_ratio,
-            fpn_strides=self.fpn_strides,
+            fpn_strides=self.fpn_strides[:-1],
             inject_annotation=inject_annotation,
             n_injected_samples=n_injected_samples
         )
@@ -43,9 +43,7 @@ class OrientedRCNNHead(nn.Module):
         self.classification = nn.Linear(out_channels, self.num_classes + 1)
         # note: we predict x, y, w, h, theta instead of the midpoint offset thingy
         # as shown in figure 2 of the paper
-        self.regression = nn.Sequential(
-            nn.Linear(out_channels, 5),
-        )
+        self.regression = nn.Linear(out_channels, 5)
 
     def forward(
             self, 
@@ -55,7 +53,15 @@ class OrientedRCNNHead(nn.Module):
             ground_truth: list[torch.Tensor] | torch.Tensor | None = None,
             reduce_injected_samples: int = 0
         ):
-        x = self.roi_align_rotated(fpn_feat, proposals, anchors, ground_truth, reduce_injected_samples)
+        filtered_feat = {}
+        filtered_proposals = {}
+        for k in fpn_feat.keys():
+            if k == "pool":
+                continue
+            else:
+                filtered_feat[k] = fpn_feat[k]
+                filtered_proposals[k] = proposals[k]
+        x = self.roi_align_rotated(filtered_feat, filtered_proposals, anchors, ground_truth, reduce_injected_samples)
         post_fc = self.fc(x["features"])
         classification = self.classification(post_fc)
         regression = self.regression(post_fc)
@@ -79,8 +85,8 @@ class OrientedRCNNHead(nn.Module):
         boxes = torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1)
         boxes[..., :-1] = boxes[..., :-1] * x["strides"][..., :-1]
 
+        # see section 3.3 of the paper
         if not self.training:
-            # see section 3.3 of the paper
             post_class_nms_classification = []
             post_class_nms_rois = []
             post_class_nms_boxes = []
@@ -108,5 +114,6 @@ class OrientedRCNNHead(nn.Module):
         return HeadOutput(
             classification=classification,
             boxes=boxes,
-            rois=rois
+            rois=rois,
+            strides = x["strides"]
         )

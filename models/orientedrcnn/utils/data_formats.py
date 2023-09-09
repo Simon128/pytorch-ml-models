@@ -13,6 +13,7 @@ class HeadOutput:
     classification: list[torch.Tensor]
     boxes: torch.Tensor | list[torch.Tensor]
     rois: list[torch.Tensor]
+    strides: list[torch.Tensor] | torch.Tensor
 
 @dataclass
 class OrientedRCNNOutput:

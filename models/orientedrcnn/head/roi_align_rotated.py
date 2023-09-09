@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from collections import OrderedDict
 from torch import nn
+from typing import Tuple
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 from torch.nn.modules.utils import _pair
@@ -123,8 +124,17 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             sampling_ratio=sampling_ratio
         )
 
+    def clip_vertices(self, vertices: torch.Tensor, size: Tuple[int, int]):
+        x = vertices[..., 0]
+        y = vertices[..., 1]
+        height, width = size
+        x = x.clamp(min=0, max=width)
+        y = y.clamp(min=0, max=height)
+        return torch.cat((x, y), dim=-1)
+
     def process_rpn_proposals(
             self, 
+            fpn_features: OrderedDict, 
             rpn_proposals: OrderedDict[str, RPNOutput], 
             anchors: OrderedDict, 
             annotation: Annotation | None = None,
@@ -142,6 +152,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                 Encodings.VERTICES,
                 anchors[k],
             )
+            #lve = self.clip_vertices(lve, fpn_features[k].shape[-2:])
             if self.inject_annotation and self.n_injected_samples - reduce_injected_samples > 0:
                 assert annotation is not None, "missing ground truth"
                 n_samples = self.n_injected_samples - reduce_injected_samples
@@ -168,6 +179,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
         for test_i , (k, v) in enumerate(result.items()):
             b = result[k]["objectness"].shape[0]
+
             cv2_format = encode(v["vertices"], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
             # cv2_format has angle in rad
             cv2_format[..., -1] = -1* cv2_format[..., -1] * 180 / np.pi
@@ -229,7 +241,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         ):
         # this is doing the roi align rotated + the filtering described in the section 3.3 of the paper
         num_batches = list(fpn_features.values())[0].shape[0]
-        cv2_format = self.process_rpn_proposals(rpn_proposals, anchors, annotation, reduce_injected_samples)
+        cv2_format = self.process_rpn_proposals(fpn_features, rpn_proposals, anchors, annotation, reduce_injected_samples)
         merged_features = {b: [] for b in range(num_batches)}
         merged_boxes = {b: [] for b in range(num_batches)}
         merged_scores = {b: [] for b in range(num_batches)}
