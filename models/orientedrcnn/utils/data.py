@@ -36,17 +36,11 @@ def randomly_adjust_midpoint_offset(midpoint_offset: torch.Tensor):
     a = midpoint_offset[..., 4]
     b = midpoint_offset[..., 5]
 
-    torch.manual_seed(12)
     x = x + w * torch.normal(mean=0, std=0.1, size=(w.shape)).to(x.device)
-    torch.manual_seed(13)
     y = y + h * torch.normal(mean=0, std=0.1, size=(h.shape)).to(x.device)
-    torch.manual_seed(14)
     w = w * torch.normal(mean=1, std=0.1, size=(w.shape)).to(x.device)
-    torch.manual_seed(15)
     h = h * torch.normal(mean=1, std=0.1, size=(h.shape)).to(x.device)
-    torch.manual_seed(16)
     a = a + w * torch.normal(mean=0, std=0.1, size=(w.shape)).to(x.device)
-    torch.manual_seed(17)
     b = b + h * torch.normal(mean=0, std=0.1, size=(h.shape)).to(x.device)
 
     return torch.stack((x, y, w, h, a, b), dim=-1)
