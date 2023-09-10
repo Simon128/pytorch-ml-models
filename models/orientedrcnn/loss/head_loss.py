@@ -44,12 +44,34 @@ class HeadLoss(nn.Module):
 
         for b in range(batch_size):
             box_targets = encode(regression_targets[b], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
-            box_targets[..., -1] = -1 * box_targets[..., -1] * 180 / math.pi
+            box_targets[..., -1] = box_targets[..., -1] * 180 / math.pi
             # try to decode here to real targets maybe???
             # or try midpoints offset as targets????
             iou = pairwise_iou_rotated(rois[b], box_targets)
             pos_indices, neg_indices = self.sampler(iou)
             background_cls = class_pred[b].shape[-1] - 1
+
+            # test
+            #import cv2
+            #import numpy as np
+            #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif")
+            #image_clone = image.copy()
+
+            #for box in box_targets[pos_indices[1]]:
+            #    rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
+            #    pts = cv2.boxPoints(rot) # type: ignore
+            #    pts = np.intp(pts) 
+            #    image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 1) # type: ignore
+
+            #for box in box_pred[b][pos_indices[0]]:
+            #    rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
+            #    pts = cv2.boxPoints(rot) # type: ignore
+            #    pts = np.intp(pts) 
+            #    image_clone = cv2.drawContours(image_clone, [pts], 0, (255, 0, 0), 1) # type: ignore
+
+            #cv2.imwrite("test.png", image_clone)
+
+            #
 
             # classification loss
             cls_targets = torch.full((len(pos_indices[0]) + len(neg_indices[0]),), background_cls, device=iou.device)
