@@ -118,6 +118,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         self.fpn_strides = fpn_strides
         self.inject_annotation = inject_annotation
         self.n_injected_samples = n_injected_samples
+        self.test = 0
+        self.test2 = 0
         super().__init__(
             output_size, 
             spatial_scale, 
@@ -140,6 +142,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             annotation: Annotation | None = None,
             reduce_injected_samples: int = 0
         ):
+        self.test += 1
         result = OrderedDict()
         # transform proposals to vertices
         for i, k in enumerate(rpn_proposals.keys()):
@@ -179,14 +182,15 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
         for test_i , (k, v) in enumerate(result.items()):
             b = result[k]["objectness"].shape[0]
-
-            cv2_format = encode(v["vertices"], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
-            # cv2_format has angle in rad
-            cv2_format[..., -1] = -1* cv2_format[..., -1] * 180 / np.pi
+            roi_format = encode(v["vertices"], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            roi_format[..., -1] = roi_format[..., -1] * -1
+            regress_format = encode(v["vertices"], Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             #debug
             #import cv2
-            #test_box = cv2_format[0, -1]
+            #test_box = roi_format[0, -1]
             #test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
+            #test_box[..., 2] = test_box[..., 2] + 20
+            #test_box[..., 3] = test_box[..., 3] + 20
             #test_box2 = torch.cat((torch.zeros((1,)).to(test_box.device), test_box))
             #test_box2 = test_box2.unsqueeze(0)
             #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif")
@@ -199,7 +203,9 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             #z = _roi.forward(tensor.float(), test_box2)
             #z_np = z.detach().cpu().squeeze(0).permute((1, 2, 0)).numpy()
             #cv2.imwrite("test.png", z_np) # type:ignore
-            #rot = ((test_box2[0, 1].item(), test_box2[0,2].item()), (test_box2[0,3].item(), test_box2[0,4].item()), -1*test_box2[0,5].item())
+            #test_box = regress_format[0, -1]
+            #test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
+            #rot = ((test_box[0].item(), test_box[1].item()), (test_box[2].item(), test_box[3].item()), test_box[4].item())
             #pts = cv2.boxPoints(rot) # type: ignore
             #pts = np.intp(pts) 
             #image_check = cv2.drawContours(image.copy(), [pts], 0, (0, 255, 0), 2) # type: ignore
@@ -207,6 +213,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             #
             hbb = encode(v["vertices"], Encodings.VERTICES, Encodings.HBB_CORNERS)
             batch_indexed = []
+            regress_format_list = []
             level_scores = []
 
             for b_idx in range(b):
@@ -216,17 +223,21 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
                 topk_idx = topk_proposals.indices
                 topk_scores = topk_proposals.values
                 keep = nms(hbb[b_idx, topk_idx], topk_scores, 0.5)
-                topk_boxes = cv2_format[b_idx, topk_idx]
+                topk_boxes = roi_format[b_idx, topk_idx]
+                topk_regress_format = regress_format[b_idx, topk_idx] 
+                kept_regress_format = topk_regress_format[keep]
                 kept_boxes = topk_boxes[keep]
                 kept_scores = topk_scores[keep]
                 n = kept_boxes.shape[0]
                 b_idx_tensor = torch.full((n, 1), b_idx).to(v["vertices"].device)
                 values = torch.concatenate((b_idx_tensor, kept_boxes), dim=-1)
                 batch_indexed.append(values)
+                regress_format_list.append(kept_regress_format)
                 level_scores.append(kept_scores)
 
             result[k] = {}
-            result[k]["boxes"] = torch.concatenate(batch_indexed, dim=0)
+            result[k]["roi_format"] = torch.concatenate(batch_indexed, dim=0)
+            result[k]["regress_format"] = regress_format_list
             result[k]["scores"] = level_scores
 
         return result
@@ -248,22 +259,35 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         merged_strides = {b: [] for b in range(num_batches)}
 
         for s_idx, k in enumerate(cv2_format.keys()):
-            roi_align = super().forward(fpn_features[k], cv2_format[k]["boxes"])
-            # todo
+            roi_align = super().forward(fpn_features[k], cv2_format[k]["roi_format"])
+            # todo ?
             roi_align = torch.nan_to_num(roi_align, EPS, EPS, EPS)
-            # todo: find a better way
-
             batched_boxes = {b: [] for b in range(num_batches)}
 
-            for idx, batch_idx in enumerate(cv2_format[k]["boxes"][:, 0]):
+            for idx, batch_idx in enumerate(cv2_format[k]["roi_format"][:, 0]):
                 merged_features[int(batch_idx.item())].append(roi_align[idx])
-                batched_boxes[int(batch_idx.item())].append(cv2_format[k]["boxes"][idx, 1:])
 
             for batch_idx in batched_boxes.keys():
-                boxes = torch.stack(batched_boxes[batch_idx], dim=0)
-                #boxes[..., :-1] = boxes[..., :-1] * self.fpn_strides[s_idx]
-                merged_strides[batch_idx].append(torch.full_like(boxes, self.fpn_strides[s_idx]))
-                merged_boxes[batch_idx].append(boxes)
+                # flip direction of angle (clockwise/anti-clockwise)
+                #debug
+                #import cv2
+                #test_box = boxes[0]
+                #test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[s_idx]
+                #test_box[..., 2] = test_box[..., 2]
+                #test_box[..., 3] = test_box[..., 3]
+                #test_box2 = torch.cat((torch.zeros((1,)).to(test_box.device), test_box))
+                #test_box2 = test_box2.unsqueeze(0)
+                #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif")
+                #rot = ((test_box2[0, 1].item(), test_box2[0,2].item()), (test_box2[0,3].item(), test_box2[0,4].item()), test_box2[0,5].item())
+                #pts = cv2.boxPoints(rot) # type: ignore
+                #pts = np.intp(pts) 
+                #image_check = cv2.drawContours(image.copy(), [pts], 0, (0, 255, 0), 2) # type: ignore
+                #cv2.imwrite("test_check.png", image_check) # type:ignore
+                #
+                merged_strides[batch_idx].append(
+                    torch.full_like(cv2_format[k]["scores"][batch_idx], self.fpn_strides[s_idx])
+                )
+                merged_boxes[batch_idx].append(cv2_format[k]["regress_format"][batch_idx])
                 merged_scores[batch_idx].append(cv2_format[k]["scores"][batch_idx])
 
         for b in range(num_batches):

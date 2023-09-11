@@ -1,5 +1,6 @@
 import torch
 from enum import Enum, auto
+import numpy as np
 
 EPS = 1e-7
 
@@ -7,7 +8,10 @@ class Encodings(Enum):
     VERTICES = auto(), # shape (..., 4, 2) [4 vertices á (x,y)]
     ANCHOR_OFFSET = auto(), # shape (..., 6) [δx, δy , δw, δh, δα, δβ]
     MIDPOINT_OFFSET = auto(), # shape(..., 6) [center x, center y, w, h, ∆α, ∆β]
-    ORIENTED_CV2_FORMAT = auto(), # shape(..., 5) [center x, center y, w, h, angle in rad]
+    THETA_FORMAT_TL_RT = auto() 
+    # shape(..., 5) [center x, center y, w, h, angle in rad]  ref vector for angle: Top left -> Top right
+    THETA_FORMAT_BL_RB = auto()  
+    # shape(..., 5) [center x, center y, w, h, angle in rad]  ref vector for angle: Bot left -> Bot right
     HBB_VERTICES = auto(), # shape (..., 4, 2) [4 vertices á (x,y)]
     HBB_CENTERED = auto(), # shape (..., 4) [center x, center y, w, h]
     HBB_CORNERS = auto() # shape (..., 4) [min x, min y, max x, max y]
@@ -32,8 +36,8 @@ class Encoder:
         ):
         assert encoding in \
             [Encodings.VERTICES, Encodings.ANCHOR_OFFSET, Encodings.MIDPOINT_OFFSET, 
-             Encodings.ORIENTED_CV2_FORMAT, Encodings.HBB_CORNERS, Encodings.HBB_VERTICES,
-             Encodings.HBB_CENTERED], \
+             Encodings.THETA_FORMAT_TL_RT, Encodings.HBB_CORNERS, Encodings.HBB_VERTICES,
+             Encodings.HBB_CENTERED, Encodings.THETA_FORMAT_BL_RB], \
             f"source encoding {encoding} not supported"
         if encoding in [Encodings.VERTICES, Encodings.HBB_VERTICES]:
             assert (
@@ -46,7 +50,7 @@ class Encoder:
                 ), \
                 f"data shape ({data.shape}) wrong for encoding {encoding}, expected (..., 6)"
             data = torch.clamp(data, min=-100000, max=100000)
-        elif encoding == Encodings.ORIENTED_CV2_FORMAT:
+        elif encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
             assert (
                 len(data.shape) >= 1 and data.shape[-1] == 5
                 ), \
@@ -68,8 +72,8 @@ class Encoder:
             return self.to_anchor_offset()
         elif target_encoding == Encodings.MIDPOINT_OFFSET:
             return self.to_midpoint_offset()
-        elif target_encoding == Encodings.ORIENTED_CV2_FORMAT:
-            return self.to_oriented_cv2()
+        elif target_encoding in [Encodings.THETA_FORMAT_TL_RT, Encodings.THETA_FORMAT_BL_RB]:
+            return self.to_theta_format(target_encoding)
         elif target_encoding == Encodings.HBB_VERTICES:
             return self.to_hbb_vertices()
         elif target_encoding == Encodings.HBB_CORNERS:
@@ -88,8 +92,8 @@ class Encoder:
             vertices = self.__midpoint_offset_to_vertices(midpoint_offset)
         elif self.encoding == Encodings.MIDPOINT_OFFSET:
             vertices = self.__midpoint_offset_to_vertices(self.data)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
+            vertices = self.__theta_to_vertices(self.data, self.encoding)
         elif self.encoding == Encodings.HBB_CENTERED:
             vertices = self.__hbb_centered_to_hbb_vertices(self.data)
         elif self.encoding == Encodings.HBB_CORNERS:
@@ -108,8 +112,8 @@ class Encoder:
             return self
         elif self.encoding == Encodings.MIDPOINT_OFFSET:
             anchor_offset = self.__midpoint_offset_to_anchor_offset(self.data, self.anchors)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
+            vertices = self.__theta_to_vertices(self.data, self.encoding)
             midpoint_offset = self.__vertices_to_midpoint_offset(vertices)
             anchor_offset = self.__midpoint_offset_to_anchor_offset(midpoint_offset, self.anchors)
         elif self.encoding == Encodings.HBB_CENTERED:
@@ -133,8 +137,8 @@ class Encoder:
             midpoint_offset = self.__anchor_offset_to_midpoint_offset(self.data, self.anchors)
         elif self.encoding == Encodings.MIDPOINT_OFFSET:
             return self
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
+            vertices = self.__theta_to_vertices(self.data, self.encoding)
             midpoint_offset = self.__vertices_to_midpoint_offset(vertices)
         elif self.encoding == Encodings.HBB_CENTERED:
             vertices = self.__hbb_centered_to_hbb_vertices(self.data)
@@ -147,29 +151,30 @@ class Encoder:
 
         return Encoder(midpoint_offset, Encodings.MIDPOINT_OFFSET, self.anchors)
 
-    def to_oriented_cv2(self) -> 'Encoder':
+    def to_theta_format(self, specific: Encodings) -> 'Encoder':
         if self.encoding in [Encodings.VERTICES, Encodings.HBB_VERTICES]:
-            oriented_cv2 = self.__vertices_to_oriented_cv2(self.data)
+            theta_format = self.__vertices_to_theta(self.data, specific)
         elif self.encoding == Encodings.ANCHOR_OFFSET:
             assert self.anchors is not None, f"anchors required for encoding {self.encoding} -> {Encodings.ORIENTED_CV2_FORMAT}"
             midpoint_offset = self.__anchor_offset_to_midpoint_offset(self.data, self.anchors)
             vertices = self.__midpoint_offset_to_vertices(midpoint_offset)
-            oriented_cv2 = self.__vertices_to_oriented_cv2(vertices)
+            theta_format = self.__vertices_to_theta(vertices, specific)
         elif self.encoding == Encodings.MIDPOINT_OFFSET:
             vertices = self.__midpoint_offset_to_vertices(self.data)
-            oriented_cv2 = self.__vertices_to_oriented_cv2(vertices)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            return self
+            theta_format = self.__vertices_to_theta(vertices, specific)
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
+            vertices = self.__theta_to_vertices(self.data, self.encoding)
+            theta_format = self.__vertices_to_theta(vertices, specific)
         elif self.encoding == Encodings.HBB_CENTERED:
             vertices = self.__hbb_centered_to_hbb_vertices(self.data)
-            oriented_cv2 = self.__vertices_to_oriented_cv2(vertices)
+            theta_format = self.__vertices_to_theta(vertices, specific)
         elif self.encoding == Encodings.HBB_CORNERS:
             vertices = self.__hbb_corners_to_hbb_vertices(self.data)
-            oriented_cv2 = self.__vertices_to_oriented_cv2(vertices)
+            theta_format = self.__vertices_to_theta(vertices, specific)
         else:
             raise ValueError(f"source encoding {self.encoding} not supported")
 
-        return Encoder(oriented_cv2, Encodings.ORIENTED_CV2_FORMAT, self.anchors)
+        return Encoder(theta_format, specific, self.anchors)
 
     def to_hbb_vertices(self) -> 'Encoder':
         if self.encoding == Encodings.VERTICES:
@@ -184,7 +189,7 @@ class Encoder:
         elif self.encoding == Encodings.MIDPOINT_OFFSET:
             vertices = self.__midpoint_offset_to_vertices(self.data)
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
             hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data[..., :-1])
         elif self.encoding == Encodings.HBB_CENTERED:
             hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data)
@@ -211,7 +216,7 @@ class Encoder:
             vertices = self.__midpoint_offset_to_vertices(self.data)
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
             hbb_corners = self.__hbb_vertices_to_hbb_corners(hbb_vertices)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
             hbb_vertices = self.__hbb_centered_to_hbb_vertices(self.data[..., :-1])
             hbb_corners = self.__hbb_vertices_to_hbb_corners(hbb_vertices)
         elif self.encoding == Encodings.HBB_CENTERED:
@@ -240,8 +245,8 @@ class Encoder:
             vertices = self.__midpoint_offset_to_vertices(self.data)
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
             hbb_centered = self.__hbb_vertices_to_hbb_centered(hbb_vertices)
-        elif self.encoding == Encodings.ORIENTED_CV2_FORMAT:
-            vertices = self.__oriented_cv2_to_vertices(self.data)
+        elif self.encoding in [Encodings.THETA_FORMAT_BL_RB, Encodings.THETA_FORMAT_TL_RT]:
+            vertices = self.__theta_to_vertices(self.data)
             hbb_vertices = self.__vertices_to_hbb_vertices(vertices)
             hbb_centered = self.__hbb_vertices_to_hbb_centered(hbb_vertices)
         elif self.encoding == Encodings.HBB_CENTERED:
@@ -294,7 +299,7 @@ class Encoder:
 
     def __vertices_to_midpoint_offset(self, vertices: torch.Tensor):
         tl = self.__get_top_left_vertices(vertices)
-        tr = self.__get_top_right_vertices(vertices)
+        rt = self.__get_right_top_vertices(vertices)
         x_min = torch.min(vertices[..., 0], dim=-1)[0]
         x_max = torch.max(vertices[..., 0], dim=-1)[0]
         y_min = torch.min(vertices[..., 1], dim=-1)[0]
@@ -304,7 +309,7 @@ class Encoder:
         x_center = x_min + w / 2
         y_center = y_min + h / 2
         delta_a = tl[..., 0, 0] - x_center
-        delta_b = tr[..., 0, 1] - y_center
+        delta_b = rt[..., 0, 1] - y_center
         return torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=-1)
 
     def __get_top_left_vertices(self, vertices: torch.Tensor):
@@ -331,7 +336,7 @@ class Encoder:
         )
         return tensors
     
-    def __get_top_right_vertices(self, vertices: torch.Tensor):
+    def __get_right_top_vertices(self, vertices: torch.Tensor):
         repeat_list = [1] * len(vertices.shape[:-1])
         repeat_list.append(2)
         repeat = tuple(repeat_list)
@@ -355,7 +360,7 @@ class Encoder:
         )
         return tensors
 
-    def __get_bot_left_vertices(self, vertices: torch.Tensor):
+    def __get_left_bot_vertices(self, vertices: torch.Tensor):
         repeat_list = [1] * len(vertices.shape[:-1])
         repeat_list.append(2)
         repeat = tuple(repeat_list)
@@ -376,6 +381,78 @@ class Encoder:
             min_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) < min_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
             min_x_tensors_second, 
             min_x_tensors
+        )
+        return tensors
+
+    def __get_left_top_vertices(self, vertices: torch.Tensor):
+        repeat_list = [1] * len(vertices.shape[:-1])
+        repeat_list.append(2)
+        repeat = tuple(repeat_list)
+        # torch argmin returns the first minial vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
+        min_x_idx = torch.argmin(vertices[..., 0], dim=-1, keepdim=True)
+        min_x_tensors = torch.gather(vertices, -2, min_x_idx.unsqueeze(-1).repeat(repeat))
+
+        # however, if the angle is pi/2, then we have two min x vertices
+        # we need to check, which on is the bot one (larger y)
+        # for this, we just flip the order of the vertices and use argmax
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        min_x_idx_second = torch.argmin(flipped_vertices[..., 0], dim=-1, keepdim=True)
+        min_x_tensors_second = torch.gather(flipped_vertices, -2, min_x_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with larger y 
+        tensors = torch.where(
+            min_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) > min_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            min_x_tensors_second, 
+            min_x_tensors
+        )
+        return tensors
+
+    def __get_bot_left_vertices(self, vertices: torch.Tensor):
+        repeat_list = [1] * len(vertices.shape[:-1])
+        repeat_list.append(2)
+        repeat = tuple(repeat_list)
+        # torch argmin returns the first minial vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
+        min_y_idx = torch.argmin(vertices[..., 1], dim=-1, keepdim=True)
+        min_y_tensors = torch.gather(vertices, -2, min_y_idx.unsqueeze(-1).repeat(repeat))
+
+        # however, if the angle is pi/2, then we have two min x vertices
+        # we need to check, which on is the bot one (larger y)
+        # for this, we just flip the order of the vertices and use argmax
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        min_y_idx_second = torch.argmin(flipped_vertices[..., 1], dim=-1, keepdim=True)
+        min_y_tensors_second = torch.gather(flipped_vertices, -2, min_y_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with larger y 
+        tensors = torch.where(
+            min_y_tensors[..., 1].unsqueeze(-1).repeat(repeat) > min_y_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            min_y_tensors_second, 
+            min_y_tensors
+        )
+        return tensors
+
+    def __get_right_bot_vertices(self, vertices: torch.Tensor):
+        repeat_list = [1] * len(vertices.shape[:-1])
+        repeat_list.append(2)
+        repeat = tuple(repeat_list)
+        # torch argmin returns the first minial vertex
+        # this is fine, if the angle is not pi/2 (axis aligned)
+        max_x_idx = torch.argmax(vertices[..., 0], dim=-1, keepdim=True)
+        max_x_tensors = torch.gather(vertices, -2, max_x_idx.unsqueeze(-1).repeat(repeat))
+
+        # however, if the angle is pi/2, then we have two max y vertices
+        # we need to check, which one is the right one (larger x)
+        # for this, we just flip the order of the vertices and use argmax
+        flipped_vertices = torch.flip(vertices, dims=(-2,))
+        max_x_idx_second = torch.argmax(flipped_vertices[..., 0], dim=-1, keepdim=True)
+        max_x_tensors_second = torch.gather(flipped_vertices, -2, max_x_idx_second.unsqueeze(-1).repeat(repeat))
+
+        # now we just take the vertices with larger x 
+        tensors = torch.where(
+            max_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) > max_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            max_x_tensors_second, 
+            max_x_tensors
         )
         return tensors
 
@@ -417,56 +494,57 @@ class Encoder:
 
         return torch.stack((v1_new, v2_new, v3_new, v4_new), dim=-2)
 
-    def __vertices_to_oriented_cv2(self, vertices: torch.Tensor):
+    def __vertices_to_theta(self, vertices: torch.Tensor, specific: Encodings):
         # transform rectangular vertices to (x, y, w, h, theta)
         # note: theta is in rad!
         # with x,y being center coordinates of box and theta 
         # correponding to the theta as defined by the mmcv RoiAlignRotated 
         vertices = self.__parallelogram_vertices_to_rectangular_vertices(vertices)
 
-        # we need the top_left vertex as origin for angle computation
-        tl_vertices = self.__get_top_left_vertices(vertices)
-        # and top right vertex as reference point 
-        tr_vertices = self.__get_top_right_vertices(vertices)
+        if specific == Encodings.THETA_FORMAT_TL_RT:
+            # CLOCKWISE ANGLE
+            tl_vertices = self.__get_top_left_vertices(vertices)
+            rt_vertices = self.__get_right_top_vertices(vertices)
+            lb_vertices = self.__get_left_bot_vertices(vertices)
+            ref_vector = rt_vertices - tl_vertices
+            # reversed y-axis (clockwise angle)
+            ref_vector[..., 1] = ref_vector[..., 1] * -1
 
-        # we need the reference vector from top left to top right
-        # note: inverted y axis
-        #ref_vector = torch.stack((tr_vertices[..., 0] - tl_vertices[..., 0], tr_vertices[..., 1] - tl_vertices[..., 1]), dim=-1)
-        ref_vector = tr_vertices - tl_vertices
-        ref_vector[..., 1] = ref_vector[..., 1] * -1
+            width = torch.norm(ref_vector, dim=-1)
+            height = torch.norm(lb_vertices - tl_vertices, dim=-1)
+            center = rt_vertices + (lb_vertices - rt_vertices) / 2
+
+        elif specific == Encodings.THETA_FORMAT_BL_RB:
+            # COUNTER CLOCKWISE ANGLE
+            bl_vertices = self.__get_bot_left_vertices(vertices)
+            rb_vertices = self.__get_right_bot_vertices(vertices)
+            lt_vertices = self.__get_left_top_vertices(vertices)
+            ref_vector = rb_vertices - bl_vertices
+
+            width = torch.norm(ref_vector, dim=-1)
+            height = torch.norm(bl_vertices - lt_vertices, dim=-1)
+            center = lt_vertices + (rb_vertices - lt_vertices) / 2
+        else:
+            raise ValueError(f"{specific} not supported as theta format")
+
         # then, we can compute the angle between this reference vector and the x axis
         rel_x_axis = torch.stack((ref_vector[..., 0], torch.zeros_like(ref_vector[..., 1])), dim=-1).to(ref_vector.device)
         angle = torch.arccos(
             torch.clamp((ref_vector[..., 0] * rel_x_axis[..., 0] + ref_vector[..., 1] * rel_x_axis[..., 1]) / 
             torch.clamp(torch.norm(ref_vector, p=2, dim=-1) * torch.norm(rel_x_axis, p=2, dim=-1), min=EPS), min=-1+EPS, max=1-EPS)
         ) 
-        # now, we can compute the width, which is just the length of the reference vector
-        width = torch.norm(ref_vector, dim=-1)
-        # for height, we need to get the bot left vertex as reference
-        # and compute the length of the vector between top left and bot left
-        bl_vertices = self.__get_bot_left_vertices(vertices)
-        height = torch.norm(bl_vertices - tl_vertices, dim=-1)
-        
-        # x/y center is just the halfway point between the top right and bottom left vertex
-        center = tr_vertices + (bl_vertices - tr_vertices) / 2
         x_center = center[..., 0]
         y_center = center[..., 1]
 
-        # todo: axis aligned
-        #if angle == 0:
-        #    # cv2 format: width and height are flipped
-        #    # and angle is w.r.t bottom left point, i.e. pi/2
-        #    # see example for cv>=4.5.1. in 
-        #    # https://github.com/open-mmlab/mmrotate/blob/main/docs/en/intro.md
-        #    angle = torch.full_like(angle, math.pi/2)
-        #    temp = width
-        #    width = height
-        #    height = temp
+        # axis aligned -> switch width and height
+        temp_height = torch.where(angle == np.pi / 2, width, height)
+        width = torch.where(angle == np.pi / 2, height, width)
+        height = temp_height
+        angle = angle * 180 / np.pi
 
-        five_params = torch.cat((x_center, y_center, width, height, angle), dim=-1)
-        return five_params
+        return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 
-    def __oriented_cv2_to_vertices(self, vertices: torch.Tensor):
+    def __theta_to_vertices(self, vertices: torch.Tensor, specific_src: Encodings):
         raise NotImplementedError("do we need this?")
 
     def __hbb_centered_to_hbb_vertices(self, hbb_centered: torch.Tensor):

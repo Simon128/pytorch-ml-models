@@ -43,10 +43,7 @@ class HeadLoss(nn.Module):
         regr_losses = []
 
         for b in range(batch_size):
-            box_targets = encode(regression_targets[b], Encodings.VERTICES, Encodings.ORIENTED_CV2_FORMAT)
-            box_targets[..., -1] = box_targets[..., -1] * 180 / math.pi
-            # try to decode here to real targets maybe???
-            # or try midpoints offset as targets????
+            box_targets = encode(regression_targets[b], Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             iou = pairwise_iou_rotated(rois[b], box_targets)
             pos_indices, neg_indices = self.sampler(iou)
             background_cls = class_pred[b].shape[-1] - 1

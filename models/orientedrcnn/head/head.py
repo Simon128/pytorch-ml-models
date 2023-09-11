@@ -73,7 +73,7 @@ class OrientedRCNNHead(nn.Module):
             dim=-2
         )
         rois = x["boxes"].clone()
-        rois[..., :-1] = rois[..., :-1] * x["strides"][..., :-1]
+        rois[..., :-1] = rois[..., :-1] * x["strides"].unsqueeze(-1)
 
         # see https://arxiv.org/pdf/1311.2524.pdf
         boxes_x = x["boxes"][..., 2] * regression[..., 0] + x["boxes"][..., 0]
@@ -83,7 +83,7 @@ class OrientedRCNNHead(nn.Module):
         # not sure what to do with angles
         boxes_a = x["boxes"][..., 4] * torch.exp(regression[..., 4])
         boxes = torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1)
-        boxes[..., :-1] = boxes[..., :-1] * x["strides"][..., :-1]
+        boxes[..., :-1] = boxes[..., :-1] * x["strides"].unsqueeze(-1)
 
         # see section 3.3 of the paper
         if not self.training:
