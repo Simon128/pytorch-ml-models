@@ -191,6 +191,11 @@ if __name__ == "__main__":
 
         #with autograd.detect_anomaly():
         out: OrientedRCNNOutput = model(tensor.to(device), annotation)
+
+        from torchviz import make_dot
+        dot = make_dot(out.head_output.boxes[0][0], params=dict(model.named_parameters()))
+        dot.render("attached", format="svg")
+
         rpn_loss, head_loss = criterion(out, annotation)
         loss = rpn_loss.total_loss + head_loss.total_loss
         loss.backward()

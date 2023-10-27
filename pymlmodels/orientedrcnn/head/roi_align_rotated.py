@@ -186,34 +186,34 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             roi_format[..., -1] = roi_format[..., -1] * -1
             regress_format = encode(v["vertices"], Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             #debug
-            import cv2
-            test_box = roi_format[0, -1]
-            test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
-            test_box[..., 2] = test_box[..., 2] + 20
-            test_box[..., 3] = test_box[..., 3] + 20
-            test_box2 = torch.cat((torch.zeros((1,)).to(test_box.device), test_box))
-            test_box2 = test_box2.unsqueeze(0)
-            image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif")
-            tensor = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0).to(test_box.device)
-            _roi = ROIAlignRotated(
-                output_size=(test_box[3], test_box[2]), 
-                spatial_scale=1, 
-                sampling_ratio=1
-            )
-            z = _roi.forward(tensor.float(), test_box2)
-            z_np = z.detach().cpu().squeeze(0).permute((1, 2, 0)).numpy()
-            cv2.imwrite("test.png", z_np) # type:ignore
-            test_box2[..., -1] = test_box2[..., -1] + 90
-            z = _roi.forward(tensor.float(), test_box2)
-            z_np = z.detach().cpu().squeeze(0).permute((1, 2, 0)).numpy()
-            cv2.imwrite("test2.png", z_np) # type:ignore
-            test_box = regress_format[0, -1]
-            test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
-            rot = ((test_box[0].item(), test_box[1].item()), (test_box[2].item(), test_box[3].item()), test_box[4].item())
-            pts = cv2.boxPoints(rot) # type: ignore
-            pts = np.intp(pts) 
-            image_check = cv2.drawContours(image.copy(), [pts], 0, (0, 255, 0), 2) # type: ignore
-            cv2.imwrite("test_check.png", image_check) # type:ignore
+            #import cv2
+            #test_box = roi_format[0, -1]
+            #test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
+            #test_box[..., 2] = test_box[..., 2] + 20
+            #test_box[..., 3] = test_box[..., 3] + 20
+            #test_box2 = torch.cat((torch.zeros((1,)).to(test_box.device), test_box))
+            #test_box2 = test_box2.unsqueeze(0)
+            #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/models/orientedrcnn/example/image.tif")
+            #tensor = torch.tensor(image).permute((2, 0, 1)).unsqueeze(0).to(test_box.device)
+            #_roi = ROIAlignRotated(
+            #    output_size=(test_box[3], test_box[2]), 
+            #    spatial_scale=1, 
+            #    sampling_ratio=1
+            #)
+            #z = _roi.forward(tensor.float(), test_box2)
+            #z_np = z.detach().cpu().squeeze(0).permute((1, 2, 0)).numpy()
+            #cv2.imwrite("test.png", z_np) # type:ignore
+            #test_box2[..., -1] = test_box2[..., -1] + 90
+            #z = _roi.forward(tensor.float(), test_box2)
+            #z_np = z.detach().cpu().squeeze(0).permute((1, 2, 0)).numpy()
+            #cv2.imwrite("test2.png", z_np) # type:ignore
+            #test_box = regress_format[0, -1]
+            #test_box[..., :-1] = test_box[..., :-1] * self.fpn_strides[test_i]
+            #rot = ((test_box[0].item(), test_box[1].item()), (test_box[2].item(), test_box[3].item()), test_box[4].item())
+            #pts = cv2.boxPoints(rot) # type: ignore
+            #pts = np.intp(pts) 
+            #image_check = cv2.drawContours(image.copy(), [pts], 0, (0, 255, 0), 2) # type: ignore
+            #cv2.imwrite("test_check.png", image_check) # type:ignore
             #
             hbb = encode(v["vertices"], Encodings.VERTICES, Encodings.HBB_CORNERS)
             batch_indexed = []
