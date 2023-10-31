@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 
 from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
 from ..model import OrientedRCNN
-from ..loss import OrientedRCNNLoss
 
 def plot_grad_flow(named_parameters):
     '''Plots the gradients flowing through different layers in the net during training.
@@ -67,28 +66,23 @@ def visualize_rpn_predictions(
         writer: SummaryWriter
     ):
     rpn_out = prediction.rpn_output
-    all_anchors = prediction.anchors
     image_grid = image.copy() 
 
     for k, stride in zip(rpn_out.keys(), fpn_strides):
         curr_image = image.copy()
-        regression = rpn_out[k].anchor_offsets[0] 
+        proposals = rpn_out[k].region_proposals[0] 
         objectness = rpn_out[k].objectness_scores[0] 
-        anchors = all_anchors[k][0] 
         mask = torch.sigmoid(objectness) > 0.7
         k = min(mask.count_nonzero().item(), 50)
         thr_objectness = objectness[mask]
-        thr_regression = regression[mask]
-        thr_anchors = anchors[mask]
+        thr_proposals = proposals[mask]
         top_idx = torch.topk(thr_objectness, k=int(k)).indices
-        top_regr = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 6)))
-        top_anchors = torch.gather(thr_anchors, 0, top_idx.unsqueeze(-1).repeat((1, 4)))
-        top_boxes = encode(top_regr, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, top_anchors) * stride
+        top_proposals = thr_proposals[top_idx]
+        top_boxes = top_proposals * stride
 
         thickness = 1
         isClosed = True
         pred_color = (0, 0, 255)
-        a_color = (0, 255, 0)
 
         for o in top_boxes:
             pts_pred = o.cpu().detach().numpy().astype(np.int32)
@@ -130,17 +124,15 @@ if __name__ == "__main__":
     annotation = load_test_annotation(device)
     writer = SummaryWriter()
 
-    curr_image = image.copy()
-    for o in annotation.boxes[0]:
-        pts_pred = o.cpu().detach().numpy().astype(np.int32)
-        curr_image = cv2.polylines(curr_image, [pts_pred], True, (255, 0,0), 1) # type: ignore
-    hbb = encode(annotation.boxes[0], Encodings.VERTICES, Encodings.HBB_VERTICES)
-    for o in hbb:
-        pts_pred = o.cpu().detach().numpy().astype(np.int32)
-        curr_image = cv2.polylines(curr_image, [pts_pred], True, (0, 255, 0), 1) # type: ignore
-    cv2.imwrite("obb_vs_hbb.png", curr_image)
-
-
+    #curr_image = image.copy()
+    #for o in annotation.boxes[0]:
+    #    pts_pred = o.cpu().detach().numpy().astype(np.int32)
+    #    curr_image = cv2.polylines(curr_image, [pts_pred], True, (255, 0,0), 1) # type: ignore
+    #hbb = encode(annotation.boxes[0], Encodings.VERTICES, Encodings.HBB_VERTICES)
+    #for o in hbb:
+    #    pts_pred = o.cpu().detach().numpy().astype(np.int32)
+    #    curr_image = cv2.polylines(curr_image, [pts_pred], True, (0, 255, 0), 1) # type: ignore
+    #cv2.imwrite("obb_vs_hbb.png", curr_image)
 
     h, w, _ = image.shape
     fpn_strides = [4, 8, 16, 32, 64]
@@ -154,21 +146,21 @@ if __name__ == "__main__":
     backbone.train()
     model = OrientedRCNN(
         backbone, 
+        tensor.shape[3],
+        tensor.shape[2],
         {
             "head": {
                 "num_classes": 3,
                 "out_channels": 1024,
-                "inject_annotation": True,
-                "n_injected_samples": 1000
+                "inject_annotation": True
             }
         }
     ).to(device)
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=1e-3, momentum=0., weight_decay=1e-5)
+        ], lr=1e-3, momentum=0.9, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1500, gamma=0.1)
-    criterion = OrientedRCNNLoss(fpn_strides=fpn_strides, n_samples=256)
 
     running_loss_rpn: LossOutput | None = None
     running_loss_head: LossOutput | None = None
@@ -177,32 +169,21 @@ if __name__ == "__main__":
 
     for e in range(epochs):
         optimizer.zero_grad()
-        #with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
-        #    with record_function("model_inference"):
-        #        out: OrientedRCNNOutput = model(tensor.to(device))
-        #    with record_function("loss_calc"):
-        #        rpn_loss, head_loss = criterion(out, annotation)
-        #        loss = rpn_loss.total_loss + head_loss.total_loss
-        #    with record_function("backward"):
-        #        loss.backward()
-        #    with record_function("optim"):
-        #        optimizer.step()
-        #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
+        out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
 
-        #with autograd.detect_anomaly():
-        out: OrientedRCNNOutput = model(tensor.to(device), annotation)
+        total_loss = torch.tensor(0.0)
+        for k, v in out.rpn_output.items():
+            total_loss = total_loss + v.loss.total_loss
 
-        from torchviz import make_dot
-        dot = make_dot(out.head_output.boxes[0][0], params=dict(model.named_parameters()))
-        dot.render("attached", format="svg")
-
-        rpn_loss, head_loss = criterion(out, annotation)
-        loss = rpn_loss.total_loss + head_loss.total_loss
-        loss.backward()
+        total_loss = total_loss + out.head_output.loss.total_loss
+        total_loss.backward()
         optimizer.step()
-        running_loss_total += loss.item()
-        rpn_loss.to_writer(writer, "rpn", e)
-        head_loss.to_writer(writer, "head", e)
+        running_loss_total += total_loss.item()
+
+        for k, v in out.rpn_output.items():
+            v.loss.to_writer(writer, f"rpn_{k}", e)
+
+        out.head_output.loss.to_writer(writer, "head", e)
 
         scheduler.step()
         

@@ -4,25 +4,6 @@ import torch
 from torch.utils.tensorboard.writer import SummaryWriter
 
 @dataclass
-class RPNOutput:
-    anchor_offsets: torch.Tensor
-    objectness_scores: torch.Tensor
-
-@dataclass
-class HeadOutput:
-    classification: list[torch.Tensor]
-    boxes: torch.Tensor | list[torch.Tensor]
-    rois: list[torch.Tensor]
-    strides: list[torch.Tensor] | torch.Tensor
-
-@dataclass
-class OrientedRCNNOutput:
-    rpn_output: OrderedDict[str, RPNOutput]
-    anchors: OrderedDict[str, torch.Tensor]
-    backbone_output: OrderedDict[str, torch.Tensor]
-    head_output: HeadOutput
-
-@dataclass
 class LossOutput:
     total_loss: float | torch.Tensor
     classification_loss: float | torch.Tensor
@@ -51,3 +32,25 @@ class LossOutput:
 class Annotation:
     boxes: list[torch.Tensor]
     classifications: list[torch.Tensor]
+
+@dataclass
+class RPNOutput:
+    region_proposals: torch.Tensor
+    objectness_scores: torch.Tensor
+    anchors: torch.Tensor
+    loss: LossOutput | None = None
+
+@dataclass
+class HeadOutput:
+    classification: list[torch.Tensor]
+    boxes: torch.Tensor | list[torch.Tensor]
+    rois: list[torch.Tensor] | torch.Tensor
+    strides: list[torch.Tensor] | torch.Tensor
+    loss: LossOutput | None
+
+@dataclass
+class OrientedRCNNOutput:
+    rpn_output: OrderedDict[str, RPNOutput]
+    anchors: OrderedDict[str, torch.Tensor]
+    backbone_output: OrderedDict[str, torch.Tensor]
+    head_output: HeadOutput
