@@ -133,22 +133,19 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             rpn_proposals: OrderedDict[str, torch.Tensor], 
         ):
         result = {}
+        b = len(list(rpn_proposals.values())[0])
         for (k, v) in rpn_proposals.items():
-            b = rpn_proposals[k].shape[0]
-            roi_format = encode(v, Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-            roi_format[..., -1] = roi_format[..., -1] * -1
-            regress_format = encode(v, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             batch_indexed = []
-
             for b_idx in range(b):
-                n = roi_format[b_idx].shape[0]
+                roi_format = encode(v[b_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+                roi_format[..., -1] = roi_format[..., -1] * -1
+                n = roi_format.shape[0]
                 b_idx_tensor = torch.full((n, 1), b_idx).to(roi_format.device)
-                values = torch.concatenate((b_idx_tensor, roi_format[b_idx]), dim=-1)
+                values = torch.concatenate((b_idx_tensor, roi_format), dim=-1)
                 batch_indexed.append(values)
 
             result[k] = {}
             result[k]["roi_format"] = torch.concatenate(batch_indexed, dim=0)
-            result[k]["regress_format"] = regress_format
 
         return result
 

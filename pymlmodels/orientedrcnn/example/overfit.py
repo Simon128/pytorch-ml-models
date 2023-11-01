@@ -13,34 +13,6 @@ import matplotlib.pyplot as plt
 from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
 from ..model import OrientedRCNN
 
-def plot_grad_flow(named_parameters):
-    '''Plots the gradients flowing through different layers in the net during training.
-    Can be used for checking for possible gradient vanishing / exploding problems.
-    
-    Usage: Plug this function in Trainer class after loss.backwards() as 
-    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
-    ave_grads = []
-    max_grads= []
-    layers = []
-    for n, p in named_parameters:
-        if(p.requires_grad) and ("bias" not in n):
-            layers.append(n)
-            ave_grads.append(p.grad.abs().mean().item())
-            max_grads.append(p.grad.abs().max().item())
-    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
-    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
-    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
-    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
-    plt.xlim(left=0, right=len(ave_grads))
-    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
-    plt.xlabel("Layers")
-    plt.ylabel("average gradient")
-    plt.title("Gradient flow")
-    plt.grid(True)
-    plt.legend([Line2D([0], [0], color="c", lw=4),
-                Line2D([0], [0], color="b", lw=4),
-                Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
-
 def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
     image = cv2.imread(os.path.join(dir, "image.tif"), cv2.IMREAD_UNCHANGED) # type: ignore
@@ -90,7 +62,7 @@ def visualize_rpn_predictions(
 
         image_grid = np.concatenate((image_grid, curr_image), axis=1)
 
-    cv2.imwrite(f"{index} RPN.png", image_grid)
+    #cv2.imwrite(f"{index} RPN.png", image_grid)
     writer.add_image('rpn', torch.tensor(image_grid).permute((2, 0, 1))/255, index)
 
 def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput, index: int, writer: SummaryWriter):
@@ -98,8 +70,8 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
     image_clone = image.copy()
     scores = torch.softmax(_cls, dim=-1)
     regr = prediction.head_output.boxes[0]
-    for c in range(_cls.shape[-1]):
-        mask = scores[..., c] > 0.8
+    for c in range(_cls.shape[-1] - 1):
+        mask = scores[..., c] > 0.1
         thr_cls = _cls[mask]
         thr_regression = regr[mask]
         if len(thr_regression) == 0:
@@ -115,7 +87,7 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
             pts = np.intp(pts) 
             image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 1) # type: ignore
 
-    cv2.imwrite(f"{index} HEAD.png", image_clone)
+    #cv2.imwrite(f"{index} HEAD.png", image_clone)
     writer.add_image(f'class/head', torch.tensor(image_clone).permute((2, 0, 1))/255, index)
 
 if __name__ == "__main__":

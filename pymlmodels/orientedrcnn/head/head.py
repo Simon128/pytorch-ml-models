@@ -59,8 +59,8 @@ class OrientedRCNNHead(nn.Module):
 
     def sample(
             self, 
-            proposals: torch.Tensor, 
-            objectness_scores: torch.Tensor,
+            proposals: list[torch.Tensor], 
+            objectness_scores: list[torch.Tensor],
             ground_truth_boxes: list[torch.Tensor],
             ground_truth_cls: list[torch.Tensor],
             stride: float
@@ -98,7 +98,7 @@ class OrientedRCNNHead(nn.Module):
             sampled_gt_boxes.append(torch.cat((ground_truth_boxes[b][pos_indices[1]], ground_truth_boxes[b][neg_indices[1]]))[rand_permutation])
             sampled_gt_cls.append(torch.cat((ground_truth_cls[b][pos_indices[1]], torch.full((n_neg,), background_cls).to(device)))[rand_permutation])
 
-        return torch.stack(sampled_proposals), torch.stack(sampled_objectness), sampled_gt_boxes, sampled_gt_cls, pos_masks
+        return sampled_proposals, sampled_objectness, sampled_gt_boxes, sampled_gt_cls, pos_masks
 
     def flatten_levels(
             self, 
@@ -185,8 +185,8 @@ class OrientedRCNNHead(nn.Module):
                 filtered_feat[k] = fpn_feat[k]
                 if self.training:
                     s_prop, s_obj, s_gt_boxes, s_gt_cls, masks = self.sample(
-                        proposals[k].region_proposals.clone().detach(), 
-                        proposals[k].objectness_scores.clone().detach(),
+                        [rp.clone().detach() for rp in proposals[k].region_proposals], 
+                        [os.clone().detach() for os in proposals[k].objectness_scores],
                         ground_truth.boxes,
                         ground_truth.classifications,
                         self.fpn_strides[s_idx]

@@ -35,9 +35,9 @@ class Annotation:
 
 @dataclass
 class RPNOutput:
-    region_proposals: torch.Tensor
-    objectness_scores: torch.Tensor
-    anchors: torch.Tensor
+    region_proposals: list[torch.Tensor]
+    objectness_scores: list[torch.Tensor]
+    anchors: list[torch.Tensor]
     loss: LossOutput | None = None
 
 @dataclass

@@ -75,7 +75,7 @@ class OrientedRPN(nn.Module):
             scores.append(topk_scores[keep])
             filt_anchors.append(topk_anchors[keep])
 
-        return torch.stack(proposals), torch.stack(scores), torch.stack(filt_anchors)
+        return proposals, scores, filt_anchors
 
     def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
         assert isinstance(x, OrderedDict)
