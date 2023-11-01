@@ -62,6 +62,19 @@ class OrientedRPN(nn.Module):
         scores: list[torch.Tensor] = []
         filt_anchors: list[torch.Tensor] = []
 
+        # alternative ?
+        #for b_idx in range(len(predictions)):
+        #    # take the top 2000 rpn proposals and apply nms
+        #    keep = nms(hbb[b_idx], objectness[b_idx], 0.8)
+        #    topk_k = min(2000, keep.shape[0])
+        #    topk_proposals = torch.topk(objectness[b_idx][keep], k=topk_k)
+        #    topk_idx = topk_proposals.indices
+        #    topk_scores = topk_proposals.values
+        #    topk_predictions = predictions[b_idx][keep][topk_idx]
+        #    topk_anchors = anchors[b_idx][keep][topk_idx]
+        #    proposals.append(topk_predictions)
+        #    scores.append(topk_scores)
+        #    filt_anchors.append(topk_anchors)
         for b_idx in range(len(predictions)):
             # take the top 2000 rpn proposals and apply nms
             topk_k = min(2000, objectness.shape[1])
@@ -74,8 +87,51 @@ class OrientedRPN(nn.Module):
             proposals.append(topk_predictions[keep])
             scores.append(topk_scores[keep])
             filt_anchors.append(topk_anchors[keep])
-
+          
         return proposals, scores, filt_anchors
+          
+    def select_top_1000(
+             self, 
+             anchor_offsets: OrderedDict[str, list[torch.Tensor]], 
+             objectness: OrderedDict[str, list[torch.Tensor]],
+             anchors: OrderedDict[str, list[torch.Tensor]]
+        ) :
+        n_batches = len(list(anchor_offsets.values())[0])
+        result_offsets = OrderedDict({k: [] for k in anchor_offsets.keys()})
+        result_objectness = OrderedDict({k: [] for k in anchor_offsets.keys()})
+        result_anchors = OrderedDict({k: [] for k in anchor_offsets.keys()})
+        for b in range(n_batches):
+            merged_objectness = []
+            merged_levels = []
+
+            for k in anchor_offsets.keys():
+                merged_objectness.append(objectness[k][b])
+                merged_levels.append(len(anchor_offsets[k][b]))
+                
+            merged_objectness = torch.cat(merged_objectness)
+
+            topk_k = min(1000, merged_objectness.shape[0])
+            topk_idx = torch.topk(merged_objectness, k=topk_k, sorted=False).indices
+            topk_mask = torch.zeros((merged_objectness.shape[0],), dtype=torch.bool).to(merged_objectness.device)
+            topk_mask[topk_idx] = True
+
+            _min = 0
+            for nl, k in zip(merged_levels, anchor_offsets.keys()):
+                level_mask = topk_mask[_min:_min+nl]
+                if level_mask.shape[0] > 0:
+                    selected_offsets = anchor_offsets[k][b][level_mask]
+                    selected_objectness = objectness[k][b][level_mask]
+                    selected_anchors = anchors[k][b][level_mask]
+                else:
+                    selected_offsets = []
+                    selected_objectness = []
+                    selected_anchors = []
+                result_offsets[k].append(selected_offsets)
+                result_objectness[k].append(selected_objectness)
+                result_anchors[k].append(selected_anchors)
+                _min += nl
+
+        return result_offsets, result_objectness, result_anchors
 
     def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
         assert isinstance(x, OrderedDict)
@@ -83,13 +139,17 @@ class OrientedRPN(nn.Module):
             assert annotation is not None, "ground truth cannot be None if training"
         anchors = self.anchor_generator.generate_like_fpn(x, self.image_width, self.image_height, device)
 
-        output = OrderedDict()
+        proc_proposals = OrderedDict()
+        proc_objectness = OrderedDict()
+        proc_anchors = OrderedDict()
+        proc_loss = OrderedDict()
+
         for idx, (k, v) in enumerate(x.items()):
             offsets, objectness = self.forward_single(v, idx, anchors[k])
             stride = self.fpn_strides[idx]
             loss = None
 
-            if self.training:
+            if annotation is not None:
                 for b in range(len(v)):
                     ann_boxes = annotation.boxes[b]
                     iou = self.rpn_anchor_iou(anchors[k][b] * stride, ann_boxes)
@@ -105,9 +165,23 @@ class OrientedRPN(nn.Module):
                     else:
                         loss = temp_loss
 
-            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k], stride)
-            output[k] = RPNOutput(region_proposals=proposals, objectness_scores=objectness, anchors=filtered_anchors, loss=loss)
+                loss = loss / len(v)
 
+            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k], stride)
+            proc_proposals[k] = proposals
+            proc_objectness[k] = objectness
+            proc_anchors[k] = filtered_anchors
+            proc_loss[k] = loss
+
+        output = OrderedDict()
+        proposals, objectness, filtered_anchors = self.select_top_1000(proc_proposals, proc_objectness, proc_anchors)
+        for k in proposals.keys():
+            output[k] = RPNOutput(
+                region_proposals=proposals[k], 
+                objectness_scores=objectness[k], 
+                anchors=filtered_anchors[k], 
+                loss=proc_loss[k]
+            )
         return output
 
     def forward_single(self, x: torch.Tensor, fpn_level: int, anchors):

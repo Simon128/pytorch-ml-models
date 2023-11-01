@@ -16,6 +16,13 @@ class LossOutput:
             regression_loss=self.regression_loss + o.regression_loss
         )
 
+    def __truediv__(self, o: float):
+        return LossOutput(
+            total_loss=self.total_loss / o,
+            classification_loss=self.classification_loss / o,
+            regression_loss=self.regression_loss / o
+        )
+
     def to_writer(self, writer: SummaryWriter, pre_tag: str, step: int):
         writer.add_scalar(f"{pre_tag}/total_loss", self.total_loss, step)
         writer.add_scalar(f"{pre_tag}/classification_loss", self.classification_loss, step)

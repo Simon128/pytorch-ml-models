@@ -19,7 +19,7 @@ class BalancedSampler(nn.Module):
         self.pos_thr = pos_thr
         self.sample_max_inbetween_as_pos = sample_max_inbetween_as_pos
 
-    def forward(self, iou: torch.Tensor):
+    def forward(self, iou: torch.Tensor, not_training: bool = False):
         pos_indices = self.__pos_indices(iou)
         neg_indices = self.__neg_indices(iou)
 
@@ -28,11 +28,11 @@ class BalancedSampler(nn.Module):
         num_pos = min(self.n_positives, available_pos)
         num_neg = min(self.n_samples - num_pos, available_neg)
 
-        choice_pos = torch.randperm(available_pos, device=iou.device)[:num_pos]
-        choice_neg = torch.randperm(available_neg, device=iou.device)[:num_neg]
-
-        pos_indices = (pos_indices[0][choice_pos], pos_indices[1][choice_pos])
-        neg_indices = (neg_indices[0][choice_neg], neg_indices[1][choice_neg])
+        if not not_training:
+            choice_pos = torch.randperm(available_pos, device=iou.device)[:num_pos]
+            choice_neg = torch.randperm(available_neg, device=iou.device)[:num_neg]
+            pos_indices = (pos_indices[0][choice_pos], pos_indices[1][choice_pos])
+            neg_indices = (neg_indices[0][choice_neg], neg_indices[1][choice_neg])
 
         return pos_indices, neg_indices
 

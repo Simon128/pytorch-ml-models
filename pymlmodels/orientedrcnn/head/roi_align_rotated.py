@@ -160,13 +160,11 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
         for k in roi_format.keys():
             roi_align = super().forward(fpn_features[k], roi_format[k]["roi_format"])
-            # todo ?
-            #roi_align = torch.nan_to_num(roi_align, EPS, EPS, EPS)
             level_features = {b: [] for b in range(num_batches)}
 
             for idx, batch_idx in enumerate(roi_format[k]["roi_format"][:, 0]):
                 level_features[int(batch_idx.item())].append(roi_align[idx])
 
-            features[k] = torch.stack([torch.stack(v) for v in level_features.values()])
+            features[k] = [torch.stack(v) for v in level_features.values()]
 
         return features

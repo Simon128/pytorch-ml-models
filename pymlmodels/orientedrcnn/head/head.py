@@ -57,7 +57,7 @@ class OrientedRCNNHead(nn.Module):
         # as shown in figure 2 of the paper
         self.regression = nn.Linear(out_channels, 5)
 
-    def sample(
+    def sample_old(
             self, 
             proposals: list[torch.Tensor], 
             objectness_scores: list[torch.Tensor],
@@ -83,7 +83,7 @@ class OrientedRCNNHead(nn.Module):
             box_targets = encode(ground_truth_boxes[b] / stride, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             iou_rois = encode(rois, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
             iou = pairwise_iou_rotated(iou_rois, box_targets)
-            pos_indices, neg_indices = self.sampler(iou)
+            pos_indices, neg_indices = self.sampler(iou, not self.training)
             n_pos = len(pos_indices[0])
             n_neg = len(neg_indices[0])
             background_cls = self.num_classes 
@@ -100,6 +100,76 @@ class OrientedRCNNHead(nn.Module):
 
         return sampled_proposals, sampled_objectness, sampled_gt_boxes, sampled_gt_cls, pos_masks
 
+    def sample(
+            self, 
+            proposals: OrderedDict[str, RPNOutput],
+            ground_truth_boxes: list[torch.Tensor],
+            ground_truth_cls: list[torch.Tensor]
+        ):
+        n_batches = len(list(proposals.values())[0].region_proposals)
+        background_cls = self.num_classes 
+        device = ground_truth_boxes[0].device
+        sampled_proposals = OrderedDict()
+        sampled_objectness = OrderedDict()
+        pos_masks = OrderedDict()
+        sampled_gt_boxes = OrderedDict()
+        sampled_gt_cls = OrderedDict()
+        
+        for b in range(n_batches):
+            merged_levels = []
+            merged_iou = []
+
+            for s_idx, k in enumerate(proposals.keys()):
+                regions = encode(proposals[k].region_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+                targets = encode(ground_truth_boxes[b] / self.fpn_strides[s_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+                merged_iou.append(pairwise_iou_rotated(regions, targets))
+                merged_levels.append(len(merged_iou[-1]))
+                
+            merged_iou = torch.cat(merged_iou)
+            pos_indices, neg_indices = self.sampler(merged_iou, not self.training)
+
+            _min = 0
+            for nl, k in zip(merged_levels,  proposals.keys()):
+                rel_pos_pro = pos_indices[0][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)] - _min
+                rel_neg_pro = neg_indices[0][(neg_indices[0] < _min+nl) & (neg_indices[0] >= _min)] - _min
+                rel_pos_gt = pos_indices[1][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)]
+                n_pos = len(rel_pos_pro)
+                n_neg = len(rel_neg_pro)
+                
+                rand_permutation = torch.randperm(n_pos + n_neg, device=merged_iou.device)
+                rand_proposals = torch.cat((
+                    proposals[k].region_proposals[b][rel_pos_pro],
+                    proposals[k].region_proposals[b][rel_neg_pro]
+                ))[rand_permutation]
+                rand_objectness = torch.cat((
+                    proposals[k].objectness_scores[b][rel_pos_pro],
+                    proposals[k].objectness_scores[b][rel_neg_pro]
+                ))[rand_permutation]
+
+                sampled_proposals.setdefault(k, [])
+                sampled_proposals[k].append(rand_proposals)
+                sampled_objectness.setdefault(k, [])
+                sampled_objectness[k].append(rand_objectness)
+                pos_mask = torch.zeros((n_pos + n_neg,), device=device, dtype=torch.bool)
+                pos_mask[:n_pos] = True
+                pos_mask = pos_mask[rand_permutation]
+                pos_masks.setdefault(k, [])
+                pos_masks[k].append(pos_mask)
+
+                gt_boxes = torch.zeros([n_pos + n_neg] + list(ground_truth_boxes[b].shape[1:]), device=device) #type: ignore
+                gt_boxes[:n_pos] = ground_truth_boxes[b][rel_pos_gt]
+                sampled_gt_boxes.setdefault(k, [])
+                sampled_gt_boxes[k].append(gt_boxes[rand_permutation])
+                gt_cls = torch.full((n_pos + n_neg,), background_cls, device=device) #type: ignore
+                gt_cls[:n_pos] = ground_truth_cls[b][rel_pos_gt]
+                gt_cls = gt_cls[rand_permutation]
+                sampled_gt_cls.setdefault(k, [])
+                sampled_gt_cls[k].append(gt_cls)
+
+                _min += nl
+
+        return sampled_proposals, sampled_objectness, sampled_gt_boxes, sampled_gt_cls, pos_masks
+
     def flatten_levels(
             self, 
             aligned_feat: OrderedDict, 
@@ -109,7 +179,7 @@ class OrientedRCNNHead(nn.Module):
             gt_cls: OrderedDict | None = None,
             pos_masks: OrderedDict | None = None
         ):
-        num_batches = list(aligned_feat.values())[0].shape[0]
+        num_batches = len(list(aligned_feat.values())[0])
         flat_features = []
         flat_boxes = []
         flat_strides = []
@@ -163,46 +233,81 @@ class OrientedRCNNHead(nn.Module):
             if pos_masks is not None:
                 flat_pos_masks.append(merged_pos_masks[keep])
 
-        return torch.stack(flat_features), torch.stack(flat_boxes), torch.stack(flat_scores), torch.stack(flat_strides), flat_gt_boxes, flat_gt_cls, flat_pos_masks
+        not_padded = []
+        max_n = max([ff.shape[0] for ff in flat_features])
+        device = flat_features[0].device
+
+        for b in range(len(flat_features)):
+            n = flat_features[b].shape[0]
+            if n == max_n: 
+                not_padded.append(torch.ones((max_n,)).to(torch.bool).to(device))
+            else:
+                flat_features[b] = torch.cat((
+                    flat_features[b], 
+                    torch.zeros([max_n - n] + list(flat_features[b].shape[1:])).to(device)
+                ))
+                flat_boxes[b] = torch.cat((
+                    flat_boxes[b], 
+                    torch.zeros([max_n - n] + list(flat_boxes[b].shape[1:])).to(device)
+                ))
+                flat_scores[b] = torch.cat((
+                    flat_scores[b], 
+                    torch.zeros([max_n - n] + list(flat_scores[b].shape[1:])).to(device)
+                ))
+                flat_strides[b] = torch.cat((
+                    flat_strides[b], 
+                    torch.zeros([max_n - n] + list(flat_strides[b].shape[1:])).to(device)
+                ))
+                not_padded.append(torch.cat((
+                    torch.ones((n,)).to(torch.bool).to(device),
+                    torch.zeros((max_n - n,)).to(torch.bool).to(device)
+                )))
+
+        return torch.stack(flat_features), torch.stack(flat_boxes), torch.stack(flat_scores), torch.stack(flat_strides), not_padded, flat_gt_boxes, flat_gt_cls, flat_pos_masks
+
+    def _inject_annotations(self, proposals: OrderedDict[str, RPNOutput], ground_truth: Annotation):
+        device = ground_truth.boxes[0].device
+        for s_idx, k in enumerate(proposals.keys()):
+            stride = self.fpn_strides[s_idx]
+            for b in range(len(proposals[k].region_proposals)):
+                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
+                rois_obj = torch.cat([
+                    proposals[k].objectness_scores[b], 
+                    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
+                ])
+                proposals[k].region_proposals[b] = rois
+                proposals[k].objectness_scores[b] = rois_obj
 
     def forward(
             self, 
             proposals: OrderedDict[str, RPNOutput], 
             fpn_feat: OrderedDict, 
-            ground_truth: Annotation 
+            ground_truth: Annotation | None = None
         ):
-        filtered_feat = OrderedDict()
+        if self.training and self.inject_annotation:
+            assert ground_truth is not None, "ground truth cannot be None during training"
+            self._inject_annotations(proposals, ground_truth)
+
         filtered_proposals = OrderedDict()
         filtered_objectness = OrderedDict()
         filtered_gt_boxes = OrderedDict()
         filtered_gt_cls = OrderedDict()
         filtered_pos_masks = OrderedDict()
+        
+        if ground_truth is not None:
+            filtered_proposals, filtered_objectness, filtered_gt_boxes, filtered_gt_cls, filtered_pos_masks = self.sample(
+                proposals,
+                ground_truth.boxes,
+                ground_truth.classifications
+            )
+        else:
+            for k in fpn_feat.keys():
+                filtered_proposals[k] = proposals[k].region_proposals
+                filtered_objectness[k] = proposals[k].objectness_scores
 
-        for s_idx, k in enumerate(fpn_feat.keys()):
-            if k == "pool":
-                continue
-            else:
-                filtered_feat[k] = fpn_feat[k]
-                if self.training:
-                    s_prop, s_obj, s_gt_boxes, s_gt_cls, masks = self.sample(
-                        [rp.clone().detach() for rp in proposals[k].region_proposals], 
-                        [os.clone().detach() for os in proposals[k].objectness_scores],
-                        ground_truth.boxes,
-                        ground_truth.classifications,
-                        self.fpn_strides[s_idx]
-                    )
-                    filtered_proposals[k] = s_prop
-                    filtered_objectness[k] = s_obj
-                    filtered_gt_boxes[k] = s_gt_boxes
-                    filtered_gt_cls[k] = s_gt_cls
-                    filtered_pos_masks[k] = masks
-                else:
-                    filtered_proposals[k] = proposals[k].region_proposals.clone().detach()
-                    filtered_objectness[k] = proposals[k].objectness_scores.clone().detach()
-
-        aligned_feat = self.roi_align_rotated(filtered_feat, filtered_proposals)
+        aligned_feat = self.roi_align_rotated(fpn_feat, filtered_proposals)
         (flat_features, flat_proposals, flat_scores, 
-         flat_strides, flat_gt_boxes, flat_gt_cls, flat_pos_masks) = self.flatten_levels(
+         flat_strides, not_padded, flat_gt_boxes, flat_gt_cls, flat_pos_masks) = self.flatten_levels(
             aligned_feat, filtered_proposals, filtered_objectness, filtered_gt_boxes, filtered_gt_cls, filtered_pos_masks
         )
         post_fc = self.fc(flat_features)
@@ -219,6 +324,28 @@ class OrientedRCNNHead(nn.Module):
         boxes_a = flat_proposals[..., 4] + regression[..., 4]
         boxes = torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1)
         boxes[..., :-1] = boxes[..., :-1] * flat_strides.unsqueeze(-1)
+        loss = None
+
+        if ground_truth is not None:
+            rois = flat_proposals.clone().detach()
+            loss = None
+
+            for b in range(len(boxes)):
+                positive_boxes = regression[b][not_padded[b]][flat_pos_masks[b]]
+                target_boxes = flat_gt_boxes[b][flat_pos_masks[b]] / flat_strides[b][not_padded[b]][flat_pos_masks[b]].unsqueeze(-1).unsqueeze(-1)
+                target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+                fp = flat_proposals[b][not_padded[b]][flat_pos_masks[b]]
+                rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
+                rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
+                rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
+                rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
+                rel_target_da = target_boxes[..., 4] - fp[..., 4]
+                rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
+                if loss is None:
+                    loss = self.loss(positive_boxes, classification[b][not_padded[b]], rel_targets, flat_gt_cls[b])
+                else:
+                    loss = loss + self.loss(positive_boxes, classification[b][not_padded[b]], rel_targets, flat_gt_cls[b])
+            loss = loss / len(boxes)
 
         if not self.training:
             post_class_nms_classification = []
@@ -227,9 +354,9 @@ class OrientedRCNNHead(nn.Module):
             for b in range(classification.shape[0]):
                 keep = []
                 for c in range(self.num_classes):
-                    thr_mask = classification[b, ..., c] > 0.05
-                    thr_cls = classification[b, thr_mask]
-                    thr_boxes = boxes[b, thr_mask]
+                    thr_mask = classification[b, not_padded[b], ..., c] > 0.05
+                    thr_cls = classification[b, not_padded[b]][thr_mask]
+                    thr_boxes = boxes[b, not_padded[b]][thr_mask]
                     if len(thr_boxes) == 0:
                         keep.append(torch.empty(0, dtype=torch.int64).to(boxes.device))
                         continue
@@ -237,27 +364,14 @@ class OrientedRCNNHead(nn.Module):
                     keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
                 keep = torch.cat(keep, dim=0)
-                post_class_nms_classification.append(classification[b, keep])
-                post_class_nms_rois.append(flat_proposals[b, keep])
-                post_class_nms_boxes.append(boxes[b, keep])
+                post_class_nms_classification.append(classification[b, not_padded[b]][keep])
+                post_class_nms_rois.append(flat_proposals[b, not_padded[b]][keep])
+                post_class_nms_boxes.append(boxes[b, not_padded[b]][keep])
 
             classification = post_class_nms_classification
             boxes = post_class_nms_boxes
             rois = post_class_nms_rois
-            loss = None
-        else:
-            rois = flat_proposals
-            loss = None
-
-            for b in range(len(boxes)):
-                positive_boxes = boxes[b][flat_pos_masks[b]]
-                target_boxes = flat_gt_boxes[b][flat_pos_masks[b]]
-                target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
-                if loss is None:
-                    loss = self.loss(positive_boxes, classification[b], target_boxes, flat_gt_cls[b])
-                else:
-                    loss = loss + self.loss(positive_boxes, classification[b], target_boxes, flat_gt_cls[b])
-
+            
         return HeadOutput(
             classification=classification,
             boxes=boxes,
@@ -266,77 +380,3 @@ class OrientedRCNNHead(nn.Module):
             loss=loss
         )
 
-    def forward_old(
-            self, 
-            proposals: OrderedDict, 
-            fpn_feat: OrderedDict, 
-            anchors: OrderedDict, 
-            ground_truth: list[torch.Tensor] | torch.Tensor | None = None,
-            reduce_injected_samples: int = 0
-        ):
-        filtered_feat = {}
-        filtered_proposals = {}
-        for k in fpn_feat.keys():
-            if k == "pool":
-                continue
-            else:
-                filtered_feat[k] = fpn_feat[k]
-                filtered_proposals[k] = proposals[k]
-        x = self.roi_align_rotated(filtered_feat, filtered_proposals, anchors, ground_truth, reduce_injected_samples)
-        post_fc = self.fc(x["features"])
-        classification = self.classification(post_fc)
-        regression = self.regression(post_fc)
-        # bring regression results to reasonable mean and std
-        #regression = normalize(
-        #    regression, 
-        #    target_mean=[0.0] * 5,
-        #    target_std=[1.0] * 5,
-        #    dim=-2
-        #)
-        rois = x["boxes"].clone()
-        rois[..., :-1] = rois[..., :-1] * x["strides"].unsqueeze(-1)
-        clamp_v = np.abs(np.log(16/1000))
-
-        # see https://arxiv.org/pdf/1311.2524.pdf
-        boxes_x = x["boxes"][..., 2] * regression[..., 0] + x["boxes"][..., 0]
-        boxes_y = x["boxes"][..., 3] * regression[..., 1] + x["boxes"][..., 1]
-        #boxes_x = regression[..., 0] * x["boxes"][..., 2] * torch.cos(x["boxes"][..., 4]) - regression[..., 1] * x["boxes"][..., 3] * torch.sin(x["boxes"][..., 4]) + x["boxes"][..., 0]
-        #boxes_y = regression[..., 0] * x["boxes"][..., 2] * torch.cos(x["boxes"][..., 4]) + regression[..., 1] * x["boxes"][..., 3] * torch.sin(x["boxes"][..., 4]) + x["boxes"][..., 1]
-        boxes_w = x["boxes"][..., 2] * torch.exp(torch.clamp(regression[..., 2], max=clamp_v, min=-clamp_v))
-        boxes_h = x["boxes"][..., 3] * torch.exp(torch.clamp(regression[..., 3], max=clamp_v, min=-clamp_v))
-        boxes_a = x["boxes"][..., 4] + regression[..., 4]
-        boxes = torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1)
-        boxes[..., :-1] = boxes[..., :-1] * x["strides"].unsqueeze(-1)
-
-        # see section 3.3 of the paper
-        if not self.training:
-            post_class_nms_classification = []
-            post_class_nms_rois = []
-            post_class_nms_boxes = []
-            for b in range(classification.shape[0]):
-                keep = []
-                for c in range(self.num_classes):
-                    thr_mask = classification[b, ..., c] > 0.05
-                    thr_cls = classification[b, thr_mask]
-                    thr_boxes = boxes[b, thr_mask]
-                    if len(thr_boxes) == 0:
-                        keep.append(torch.empty(0, dtype=torch.int64).to(boxes.device))
-                        continue
-                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
-                    keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
-
-                keep = torch.cat(keep, dim=0)
-                post_class_nms_classification.append(classification[b, keep])
-                post_class_nms_rois.append(rois[b, keep])
-                post_class_nms_boxes.append(boxes[b, keep])
-
-            classification = post_class_nms_classification
-            boxes = post_class_nms_boxes
-            rois = post_class_nms_rois
-
-        return HeadOutput(
-            classification=classification,
-            boxes=boxes,
-            rois=rois,
-            strides = x["strides"]
-        )
