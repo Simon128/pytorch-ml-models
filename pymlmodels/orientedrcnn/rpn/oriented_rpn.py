@@ -258,7 +258,7 @@ class OrientedRPN(nn.Module):
                     if torchdist.is_initialized() and torchdist.get_world_size() > 1:
                         # prevent unused parameters (which crashes DDP)
                         # is there a better way?
-                        loss = loss + torch.sum(all_objectness[k] * 0)
+                        loss.total_loss = loss.total_loss + torch.sum(all_objectness[k] * 0)
 
                 proc_loss[k] = loss / len(v)
 
