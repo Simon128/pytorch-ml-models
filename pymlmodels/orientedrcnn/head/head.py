@@ -57,49 +57,6 @@ class OrientedRCNNHead(nn.Module):
         # as shown in figure 2 of the paper
         self.regression = nn.Linear(out_channels, 5)
 
-    def sample_old(
-            self, 
-            proposals: list[torch.Tensor], 
-            objectness_scores: list[torch.Tensor],
-            ground_truth_boxes: list[torch.Tensor],
-            ground_truth_cls: list[torch.Tensor],
-            stride: float
-        ):
-        device = proposals[0].device
-        sampled_proposals = []
-        sampled_objectness = []
-        pos_masks = []
-        sampled_gt_boxes = []
-        sampled_gt_cls = []
-
-        for b in range(len(proposals)):
-            if self.inject_annotation:
-                rois = torch.cat([proposals[b], ground_truth_boxes[b] / stride])
-                rois_obj = torch.cat([objectness_scores[b], torch.ones((len(ground_truth_boxes[b],))).float().to(device)])
-            else:
-                rois = proposals[b]
-                rois_obj = objectness_scores[b]
-
-            box_targets = encode(ground_truth_boxes[b] / stride, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
-            iou_rois = encode(rois, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
-            iou = pairwise_iou_rotated(iou_rois, box_targets)
-            pos_indices, neg_indices = self.sampler(iou, not self.training)
-            n_pos = len(pos_indices[0])
-            n_neg = len(neg_indices[0])
-            background_cls = self.num_classes 
-            rand_permutation = torch.randperm(n_pos + n_neg, device=iou.device)
-            pos_mask = torch.zeros((n_pos + n_neg,), device=rois.device)
-            pos_mask[:n_pos] = 1
-            pos_mask = pos_mask[rand_permutation].to(torch.bool)
-            pos_masks.append(pos_mask)
-            sampled_proposals.append(torch.cat((rois[pos_indices[0]], rois[neg_indices[0]]))[rand_permutation])
-            sampled_objectness.append(torch.cat((rois_obj[pos_indices[0]], rois_obj[neg_indices[0]]))[rand_permutation])
-            # we just fill the samples gt boxes up, later the correct ones will be selected via pos_masks
-            sampled_gt_boxes.append(torch.cat((ground_truth_boxes[b][pos_indices[1]], ground_truth_boxes[b][neg_indices[1]]))[rand_permutation])
-            sampled_gt_cls.append(torch.cat((ground_truth_cls[b][pos_indices[1]], torch.full((n_neg,), background_cls).to(device)))[rand_permutation])
-
-        return sampled_proposals, sampled_objectness, sampled_gt_boxes, sampled_gt_cls, pos_masks
-
     def sample(
             self, 
             proposals: OrderedDict[str, RPNOutput],
@@ -304,7 +261,6 @@ class OrientedRCNNHead(nn.Module):
             for k in fpn_feat.keys():
                 filtered_proposals[k] = proposals[k].region_proposals
                 filtered_objectness[k] = proposals[k].objectness_scores
-
         aligned_feat = self.roi_align_rotated(fpn_feat, filtered_proposals)
         (flat_features, flat_proposals, flat_scores, 
          flat_strides, not_padded, flat_gt_boxes, flat_gt_cls, flat_pos_masks) = self.flatten_levels(
@@ -373,10 +329,10 @@ class OrientedRCNNHead(nn.Module):
             rois = post_class_nms_rois
             
         return HeadOutput(
+            #classification=[c.clone().detach().cpu() for c in classification],
+            #boxes=[b.clone().detach().cpu() for b in boxes],
             classification=classification,
             boxes=boxes,
-            rois=rois,
-            strides=flat_strides,
             loss=loss
         )
 

@@ -133,6 +133,87 @@ class OrientedRPN(nn.Module):
 
         return result_offsets, result_objectness, result_anchors
 
+    def sample(
+            self, 
+            anchors: OrderedDict[str, torch.Tensor],
+            offsets: OrderedDict[str, torch.Tensor],
+            objectness: OrderedDict[str, torch.Tensor],
+            ground_truth_boxes: list[torch.Tensor]
+        ):
+        n_batches = len(ground_truth_boxes)
+        device = ground_truth_boxes[0].device
+        sampled_anchors = OrderedDict()
+        sampled_offsets = OrderedDict()
+        sampled_objectness = OrderedDict()
+        pos_masks = OrderedDict()
+        sampled_gt_boxes = OrderedDict()
+        sampled_gt_objectness = OrderedDict()
+        
+        for b in range(n_batches):
+            merged_levels = []
+            merged_iou = []
+
+            for s_idx, k in enumerate(anchors.keys()):
+                merged_iou.append(self.rpn_anchor_iou(anchors[k][b], ground_truth_boxes[b] / self.fpn_strides[s_idx]))
+                merged_levels.append(len(merged_iou[-1]))
+                
+            merged_iou = torch.cat(merged_iou)
+            pos_indices, neg_indices = self.sampler(merged_iou, not self.training)
+
+            _min = 0
+            for s_idx, (nl, k) in enumerate(zip(merged_levels, anchors.keys())):
+                rel_pos_pro = pos_indices[0][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)] - _min
+                rel_neg_pro = neg_indices[0][(neg_indices[0] < _min+nl) & (neg_indices[0] >= _min)] - _min
+                rel_pos_gt = pos_indices[1][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)]
+                n_pos = len(rel_pos_pro)
+                n_neg = len(rel_neg_pro)
+                
+                rand_permutation = torch.randperm(n_pos + n_neg, device=merged_iou.device)
+                rand_proposals = torch.cat((
+                    anchors[k][b][rel_pos_pro],
+                    anchors[k][b][rel_neg_pro]
+                ))[rand_permutation]
+                rand_offsets = torch.cat((
+                    offsets[k][b][rel_pos_pro],
+                    offsets[k][b][rel_neg_pro]
+                ))[rand_permutation]
+                rand_objectness = torch.cat((
+                    objectness[k][b][rel_pos_pro],
+                    objectness[k][b][rel_neg_pro]
+                ))[rand_permutation]
+
+                sampled_anchors.setdefault(k, [])
+                sampled_anchors[k].append(rand_proposals)
+                sampled_offsets.setdefault(k, [])
+                sampled_offsets[k].append(rand_offsets)
+                sampled_objectness.setdefault(k, [])
+                sampled_objectness[k].append(rand_objectness)
+                pos_mask = torch.zeros((n_pos + n_neg,), device=device, dtype=torch.bool)
+                pos_mask[:n_pos] = True
+                pos_mask = pos_mask[rand_permutation]
+                pos_masks.setdefault(k, [])
+                pos_masks[k].append(pos_mask)
+
+                gt_boxes = torch.zeros([n_pos + n_neg,6], device=device) #type: ignore
+                
+                gt_boxes[:n_pos] = encode(
+                    ground_truth_boxes[b][rel_pos_gt] / self.fpn_strides[s_idx], 
+                    Encodings.VERTICES, 
+                    Encodings.ANCHOR_OFFSET, 
+                    anchors[k][b][rel_pos_pro]
+                )
+                sampled_gt_boxes.setdefault(k, [])
+                sampled_gt_boxes[k].append(gt_boxes[rand_permutation])
+                gt_cls = torch.zeros((n_pos + n_neg,), device=device, dtype=torch.float) #type: ignore
+                gt_cls[:n_pos] = 1.0
+                gt_cls = gt_cls[rand_permutation]
+                sampled_gt_objectness.setdefault(k, [])
+                sampled_gt_objectness[k].append(gt_cls)
+
+                _min += nl
+
+        return sampled_anchors, sampled_offsets, sampled_objectness, sampled_gt_boxes, sampled_gt_objectness, pos_masks
+
     def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
         assert isinstance(x, OrderedDict)
         if self.training:
@@ -143,37 +224,39 @@ class OrientedRPN(nn.Module):
         proc_objectness = OrderedDict()
         proc_anchors = OrderedDict()
         proc_loss = OrderedDict()
+        output = OrderedDict()
+
+        all_offsets = OrderedDict()
+        all_objectness = OrderedDict()
 
         for idx, (k, v) in enumerate(x.items()):
             offsets, objectness = self.forward_single(v, idx, anchors[k])
+            all_offsets[k] = offsets
+            all_objectness[k] = objectness
             stride = self.fpn_strides[idx]
             loss = None
+            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k], stride)
+            proc_proposals[k] = proposals
+            proc_objectness[k] = objectness
+            proc_anchors[k] = filtered_anchors
+            proc_loss[k] = None
 
+        if annotation is not None:
+            (sampled_anchors, sampled_offsets, sampled_objectness, 
+             sampled_gt_boxes, sampled_gt_objectness, pos_masks) = self.sample(anchors, all_offsets, all_objectness, annotation.boxes)
+        for k, v in x.items():
             if annotation is not None:
                 for b in range(len(v)):
-                    ann_boxes = annotation.boxes[b]
-                    iou = self.rpn_anchor_iou(anchors[k][b] * stride, ann_boxes)
-                    pos_indices, neg_indices = self.sampler(iou)
-                    pos_anchor_offsets = offsets[b][pos_indices[0]]
-                    pos_objectness = objectness[b][pos_indices[0]]
-                    neg_objectness = objectness[b][neg_indices[0]]
-                    target_vertices = ann_boxes[pos_indices[1]]
-                    target_offsets = encode(target_vertices / stride, Encodings.VERTICES, Encodings.ANCHOR_OFFSET, anchors[k][b][pos_indices[0]])
-                    temp_loss = self.loss(pos_anchor_offsets, pos_objectness, neg_objectness, target_offsets)
+                    pos_anchor_offsets = sampled_offsets[k][b][pos_masks[k][b]]
+                    target_offsets = sampled_gt_boxes[k][b][pos_masks[k][b]]
+                    temp_loss = self.loss(pos_anchor_offsets, sampled_objectness[k][b], sampled_gt_objectness[k][b] , target_offsets)
                     if loss:
                         loss = loss + temp_loss
                     else:
                         loss = temp_loss
 
-                loss = loss / len(v)
+                proc_loss[k] = loss / len(v)
 
-            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k], stride)
-            proc_proposals[k] = proposals
-            proc_objectness[k] = objectness
-            proc_anchors[k] = filtered_anchors
-            proc_loss[k] = loss
-
-        output = OrderedDict()
         proposals, objectness, filtered_anchors = self.select_top_1000(proc_proposals, proc_objectness, proc_anchors)
         for k in proposals.keys():
             output[k] = RPNOutput(

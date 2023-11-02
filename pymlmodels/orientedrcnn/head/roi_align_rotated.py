@@ -157,6 +157,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         num_batches = list(fpn_features.values())[0].shape[0]
         roi_format = self.process_rpn_proposals(rpn_proposals)
         features = OrderedDict() 
+        device = list(fpn_features.values())[0].device
 
         for k in roi_format.keys():
             roi_align = super().forward(fpn_features[k], roi_format[k]["roi_format"])
@@ -165,6 +166,6 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             for idx, batch_idx in enumerate(roi_format[k]["roi_format"][:, 0]):
                 level_features[int(batch_idx.item())].append(roi_align[idx])
 
-            features[k] = [torch.stack(v) for v in level_features.values()]
+            features[k] = [torch.stack(v) if v else torch.Tensor().to(device) for v in level_features.values() ]
 
         return features
