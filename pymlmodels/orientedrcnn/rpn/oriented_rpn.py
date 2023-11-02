@@ -262,7 +262,6 @@ class OrientedRPN(nn.Module):
             output[k] = RPNOutput(
                 region_proposals=proposals[k], 
                 objectness_scores=objectness[k], 
-                anchors=filtered_anchors[k], 
                 loss=proc_loss[k]
             )
         return output

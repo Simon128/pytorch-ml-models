@@ -44,7 +44,6 @@ class Annotation:
 class RPNOutput:
     region_proposals: list[torch.Tensor]
     objectness_scores: list[torch.Tensor]
-    anchors: list[torch.Tensor]
     loss: LossOutput | None = None
 
 @dataclass
