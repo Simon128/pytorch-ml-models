@@ -3,6 +3,7 @@ import torch.nn as nn
 from collections import OrderedDict
 from torchvision.ops import box_iou
 from torchvision.ops import nms
+import torch.distributed as torchdist
 
 from .loss import RPNLoss
 from ..utils.sampler import BalancedSampler
@@ -254,6 +255,10 @@ class OrientedRPN(nn.Module):
                         loss = loss + temp_loss
                     else:
                         loss = temp_loss
+                    if torchdist.is_initialized() and torchdist.get_world_size() > 1:
+                        # prevent unused parameters (which crashes DDP)
+                        # is there a better way?
+                        loss = loss + torch.sum(all_objectness[k] * 0)
 
                 proc_loss[k] = loss / len(v)
 
