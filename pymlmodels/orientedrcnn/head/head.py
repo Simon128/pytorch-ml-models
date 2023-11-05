@@ -272,7 +272,7 @@ class OrientedRCNNHead(nn.Module):
 
         # see https://arxiv.org/pdf/1311.2524.pdf
         clamp_v = np.abs(np.log(16/1000))
-        flat_proposals = encode(flat_proposals, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+        flat_proposals = encode(flat_proposals, Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
         boxes_x = flat_proposals[..., 2] * regression[..., 0] + flat_proposals[..., 0]
         boxes_y = flat_proposals[..., 3] * regression[..., 1] + flat_proposals[..., 1]
         boxes_w = flat_proposals[..., 2] * torch.exp(torch.clamp(regression[..., 2], max=clamp_v, min=-clamp_v))
@@ -288,7 +288,7 @@ class OrientedRCNNHead(nn.Module):
             for b in range(len(boxes)):
                 positive_boxes = regression[b][not_padded[b]][flat_pos_masks[b]]
                 target_boxes = flat_gt_boxes[b][flat_pos_masks[b]] / flat_strides[b][not_padded[b]][flat_pos_masks[b]].unsqueeze(-1).unsqueeze(-1)
-                target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+                target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
                 fp = flat_proposals[b][not_padded[b]][flat_pos_masks[b]]
                 rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
                 rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]

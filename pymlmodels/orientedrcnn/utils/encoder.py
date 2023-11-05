@@ -545,7 +545,22 @@ class Encoder:
         return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 
     def __theta_to_vertices(self, vertices: torch.Tensor, specific_src: Encodings):
-        raise NotImplementedError("do we need this?")
+        # center x, center y, width, height, angle
+        device = vertices.device
+        x = vertices[..., 0]
+        y = vertices[..., 1]
+        width = vertices[..., 2]
+        height = vertices[..., 3]
+        angle = vertices[..., 4]
+        rel_x_axis = torch.stack((x, torch.zeros_like(y)), dim=-1).to(device)
+        if specific_src == Encodings.THETA_FORMAT_TL_RT:
+            # center is x,y
+            # reference vector is 1,y
+            raise NotImplementedError("do we need this?")
+        elif specific_src == Encodings.THETA_FORMAT_BL_RB:
+            raise NotImplementedError("do we need this?")
+        else:
+            raise NotImplementedError("do we need this?")
 
     def __hbb_centered_to_hbb_vertices(self, hbb_centered: torch.Tensor):
         center_x = hbb_centered[..., 0]
