@@ -283,7 +283,6 @@ class OrientedRCNNHead(nn.Module):
         loss = None
 
         if ground_truth is not None:
-            rois = flat_proposals.clone().detach()
             loss = None
 
             for b in range(len(boxes)):
@@ -326,11 +325,8 @@ class OrientedRCNNHead(nn.Module):
 
             classification = post_class_nms_classification
             boxes = post_class_nms_boxes
-            rois = post_class_nms_rois
             
         return HeadOutput(
-            #classification=[c.clone().detach().cpu() for c in classification],
-            #boxes=[b.clone().detach().cpu() for b in boxes],
             classification=classification,
             boxes=boxes,
             loss=loss

@@ -82,7 +82,7 @@ class OrientedRPN(nn.Module):
             topk_proposals = torch.topk(objectness[b_idx], k=topk_k)
             topk_idx = topk_proposals.indices
             topk_scores = topk_proposals.values
-            keep = nms(hbb[b_idx, topk_idx], topk_scores, 0.5)
+            keep = nms(hbb[b_idx, topk_idx], topk_scores, 0.8)
             topk_predictions = predictions[b_idx, topk_idx]
             topk_anchors = anchors[b_idx][topk_idx]
             proposals.append(topk_predictions[keep])
@@ -276,7 +276,7 @@ class OrientedRPN(nn.Module):
         stride = self.fpn_strides[fpn_level]
         b, _, h, w = x.shape
         anchor_offsets = self.regression_branch[str(fpn_level)](x)
-        anchor_offsets = anchor_offsets.reshape((b, self.num_anchors, -1, h, w))
+        anchor_offsets = anchor_offsets.view((b, self.num_anchors, -1, h, w))
         anchor_offsets = torch.movedim(anchor_offsets, 2, -1)
         anchor_offsets = anchor_offsets.flatten(1, -2)
         # normalize the anchor offsets to a reasonable mean and std
