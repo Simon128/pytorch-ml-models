@@ -55,7 +55,7 @@ class OrientedRPN(nn.Module):
         hbb_target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.HBB_CORNERS)
         return box_iou(hbb_anchors, hbb_target_boxes)
 
-    def filter_proposals(self, anchor_offsets: torch.Tensor, objectness: torch.Tensor, anchors: torch.Tensor, stride: float):
+    def filter_proposals(self, anchor_offsets: torch.Tensor, objectness: torch.Tensor, anchors: torch.Tensor ):
         predictions = encode(anchor_offsets, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, anchors=anchors)
         hbb = encode(predictions, Encodings.VERTICES, Encodings.HBB_CORNERS)
 
@@ -159,7 +159,7 @@ class OrientedRPN(nn.Module):
                 merged_levels.append(len(merged_iou[-1]))
                 
             merged_iou = torch.cat(merged_iou)
-            pos_indices, neg_indices = self.sampler(merged_iou, not self.training)
+            pos_indices, neg_indices = self.sampler(merged_iou)
 
             _min = 0
             for s_idx, (nl, k) in enumerate(zip(merged_levels, anchors.keys())):
@@ -234,9 +234,8 @@ class OrientedRPN(nn.Module):
             offsets, objectness = self.forward_single(v, idx, anchors[k])
             all_offsets[k] = offsets
             all_objectness[k] = objectness
-            stride = self.fpn_strides[idx]
             loss = None
-            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k], stride)
+            proposals, objectness, filtered_anchors = self.filter_proposals(offsets, objectness, anchors[k])
             proc_proposals[k] = proposals
             proc_objectness[k] = objectness
             proc_anchors[k] = filtered_anchors
@@ -263,7 +262,9 @@ class OrientedRPN(nn.Module):
                 proc_loss[k] = loss / len(v)
 
         proposals, objectness, filtered_anchors = self.select_top_1000(proc_proposals, proc_objectness, proc_anchors)
+        test = 0
         for k in proposals.keys():
+            test += proposals[k][0].shape[0]
             output[k] = RPNOutput(
                 region_proposals=proposals[k], 
                 objectness_scores=objectness[k], 

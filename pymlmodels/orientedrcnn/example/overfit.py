@@ -142,6 +142,11 @@ if __name__ == "__main__":
     for e in range(epochs):
         optimizer.zero_grad()
         out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
+        # val test:
+        model.eval()
+        with torch.inference_mode():
+            val_uot: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
+        model.train()
 
         total_loss = torch.tensor(0.0)
         for k, v in out.rpn_output.items():
