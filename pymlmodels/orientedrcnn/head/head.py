@@ -85,7 +85,7 @@ class OrientedRCNNHead(nn.Module):
                 merged_levels.append(len(merged_iou[-1]))
                 
             merged_iou = torch.cat(merged_iou)
-            pos_indices, neg_indices = self.sampler(merged_iou)
+            pos_indices, neg_indices = self.sampler(merged_iou, not self.training)
 
             _min = 0
             for nl, k in zip(merged_levels,  proposals.keys()):
