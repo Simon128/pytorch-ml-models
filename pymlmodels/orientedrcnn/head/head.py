@@ -61,73 +61,36 @@ class OrientedRCNNHead(nn.Module):
 
     def sample(
             self, 
-            proposals: OrderedDict[str, RPNOutput],
+            proposals: list[torch.Tensor],
+            strides: list[torch.Tensor],
             ground_truth_boxes: list[torch.Tensor],
             ground_truth_cls: list[torch.Tensor]
         ):
-        n_batches = len(list(proposals.values())[0].region_proposals)
+        n_batches = len(proposals)
         background_cls = self.num_classes 
         device = ground_truth_boxes[0].device
-        sampled_proposals = OrderedDict()
-        sampled_objectness = OrderedDict()
-        pos_masks = OrderedDict()
-        sampled_gt_boxes = OrderedDict()
-        sampled_gt_cls = OrderedDict()
+
+        sampled_indices = []
+        positives = []
+        sampled_ground_truth_boxes = []
+        sampled_ground_truth_cls = []
         
         for b in range(n_batches):
-            merged_levels = []
-            merged_iou = []
+            regions = encode(proposals[b] * strides[b][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            targets = encode(ground_truth_boxes[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            iou = pairwise_iou_rotated(regions, targets)
 
-            for s_idx, k in enumerate(proposals.keys()):
-                regions = encode(proposals[k].region_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-                targets = encode(ground_truth_boxes[b] / self.fpn_strides[s_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-                merged_iou.append(pairwise_iou_rotated(regions, targets))
-                merged_levels.append(len(merged_iou[-1]))
-                
-            merged_iou = torch.cat(merged_iou)
-            pos_indices, neg_indices = self.sampler(merged_iou, not self.training)
+            pos_indices, neg_indices = self.sampler(iou)
+            n_pos, n_neg = len(pos_indices[0]), len(neg_indices[0])
+            positives.append(n_pos)
 
-            _min = 0
-            for nl, k in zip(merged_levels,  proposals.keys()):
-                rel_pos_pro = pos_indices[0][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)] - _min
-                rel_neg_pro = neg_indices[0][(neg_indices[0] < _min+nl) & (neg_indices[0] >= _min)] - _min
-                rel_pos_gt = pos_indices[1][(pos_indices[0] < _min+nl) & (pos_indices[0] >= _min)]
-                n_pos = len(rel_pos_pro)
-                n_neg = len(rel_neg_pro)
-                
-                rand_permutation = torch.randperm(n_pos + n_neg, device=merged_iou.device)
-                rand_proposals = torch.cat((
-                    proposals[k].region_proposals[b][rel_pos_pro],
-                    proposals[k].region_proposals[b][rel_neg_pro]
-                ))[rand_permutation]
-                rand_objectness = torch.cat((
-                    proposals[k].objectness_scores[b][rel_pos_pro],
-                    proposals[k].objectness_scores[b][rel_neg_pro]
-                ))[rand_permutation]
+            sampled_indices.append(torch.cat((pos_indices[0], neg_indices[0])))
+            sampled_ground_truth_boxes.append(targets[pos_indices[1]])
+            gt_cls = torch.full((n_pos + n_neg,), background_cls, device=device) #type: ignore
+            gt_cls[:n_pos] = ground_truth_cls[b][pos_indices[1]]
+            sampled_ground_truth_cls.append(gt_cls)
 
-                sampled_proposals.setdefault(k, [])
-                sampled_proposals[k].append(rand_proposals)
-                sampled_objectness.setdefault(k, [])
-                sampled_objectness[k].append(rand_objectness)
-                pos_mask = torch.zeros((n_pos + n_neg,), device=device, dtype=torch.bool)
-                pos_mask[:n_pos] = True
-                pos_mask = pos_mask[rand_permutation]
-                pos_masks.setdefault(k, [])
-                pos_masks[k].append(pos_mask)
-
-                gt_boxes = torch.zeros([n_pos + n_neg] + list(ground_truth_boxes[b].shape[1:]), device=device) #type: ignore
-                gt_boxes[:n_pos] = ground_truth_boxes[b][rel_pos_gt]
-                sampled_gt_boxes.setdefault(k, [])
-                sampled_gt_boxes[k].append(gt_boxes[rand_permutation])
-                gt_cls = torch.full((n_pos + n_neg,), background_cls, device=device) #type: ignore
-                gt_cls[:n_pos] = ground_truth_cls[b][rel_pos_gt]
-                gt_cls = gt_cls[rand_permutation]
-                sampled_gt_cls.setdefault(k, [])
-                sampled_gt_cls[k].append(gt_cls)
-
-                _min += nl
-
-        return sampled_proposals, sampled_objectness, sampled_gt_boxes, sampled_gt_cls, pos_masks
+        return sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls
 
     def _inject_annotations(self, proposals: OrderedDict[str, RPNOutput], ground_truth: Annotation):
         device = ground_truth.boxes[0].device
@@ -189,31 +152,13 @@ class OrientedRCNNHead(nn.Module):
             assert ground_truth is not None, "ground truth cannot be None during training"
             self._inject_annotations(proposals, ground_truth)
 
-        filtered_proposals = OrderedDict()
-        filtered_objectness = OrderedDict()
-        filtered_gt_boxes = OrderedDict()
-        filtered_gt_cls = OrderedDict()
-        filtered_pos_masks = OrderedDict()
+        region_proposals = OrderedDict()
+        for k in proposals.keys():
+            region_proposals[k] = proposals[k].region_proposals
 
-        if ground_truth is not None:
-            filtered_proposals, filtered_objectness, filtered_gt_boxes, filtered_gt_cls, filtered_pos_masks = self.sample(
-                proposals,
-                ground_truth.boxes,
-                ground_truth.classifications
-            )
-        else:
-            for k in fpn_feat.keys():
-                filtered_proposals[k] = proposals[k].region_proposals
-                filtered_objectness[k] = proposals[k].objectness_scores
-
-        aligned_feat = self.roi_align_rotated(fpn_feat, filtered_proposals)
-
-        flat_proposals, flat_strides = self.flatten_dict(filtered_proposals, strides=self.fpn_strides)
+        aligned_feat = self.roi_align_rotated(fpn_feat, region_proposals)
+        flat_proposals, flat_strides = self.flatten_dict(region_proposals, strides=self.fpn_strides)
         flat_features = self.flatten_dict(aligned_feat)
-        if ground_truth is not None:
-            flat_gt_boxes = self.flatten_dict(filtered_gt_boxes)
-            flat_gt_cls = self.flatten_dict(filtered_gt_cls)
-            flat_pos_masks = self.flatten_dict(filtered_pos_masks)
             
         # preventing torch stack because it copies data
         # -> large max mem allocation
@@ -241,13 +186,18 @@ class OrientedRCNNHead(nn.Module):
         loss = None
 
         if ground_truth is not None:
-            loss = None
+            sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
+                flat_proposals,
+                flat_strides,
+                ground_truth.boxes,
+                ground_truth.classifications
+            )
 
             for b in range(len(boxes)):
-                positive_boxes = regression[b][flat_pos_masks[b]]
-                target_boxes = flat_gt_boxes[b][flat_pos_masks[b]] / flat_strides[b][flat_pos_masks[b]].unsqueeze(-1).unsqueeze(-1)
-                target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-                fp = encode(flat_proposals[b][flat_pos_masks[b]], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+                pos_idx = sampled_indices[b][:positives[b]]
+                positive_boxes = regression[b][pos_idx]
+                target_boxes = sampled_ground_truth_boxes[b]
+                fp = encode(flat_proposals[b][pos_idx] * flat_strides[b][pos_idx][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
                 rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
                 rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
@@ -255,9 +205,9 @@ class OrientedRCNNHead(nn.Module):
                 rel_target_da = target_boxes[..., 4] - fp[..., 4]
                 rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
                 if loss is None:
-                    loss = self.loss(positive_boxes, classification[b], rel_targets, flat_gt_cls[b])
+                    loss = self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
                 else:
-                    loss = loss + self.loss(positive_boxes, classification[b], rel_targets, flat_gt_cls[b])
+                    loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
             loss = loss / len(boxes)
 
         if not self.training:
