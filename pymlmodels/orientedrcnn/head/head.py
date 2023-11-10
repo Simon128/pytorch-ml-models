@@ -155,7 +155,7 @@ class OrientedRCNNHead(nn.Module):
         region_proposals = OrderedDict()
         for k in proposals.keys():
             region_proposals[k] = proposals[k].region_proposals
-
+        
         aligned_feat = self.roi_align_rotated(fpn_feat, region_proposals)
         flat_proposals, flat_strides = self.flatten_dict(region_proposals, strides=self.fpn_strides)
         flat_features = self.flatten_dict(aligned_feat)
@@ -210,29 +210,30 @@ class OrientedRCNNHead(nn.Module):
                     loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
             loss = loss / len(boxes)
 
-        if not self.training:
-            post_class_nms_classification = []
-            post_class_nms_rois = []
-            post_class_nms_boxes = []
-            for b in range(len(classification)):
-                keep = []
-                for c in range(self.num_classes):
-                    thr_mask = classification[b][..., c] > 0.05
-                    thr_cls = classification[b][thr_mask]
-                    thr_boxes = boxes[b][thr_mask]
-                    if len(thr_boxes) == 0:
-                        keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
-                        continue
-                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
-                    keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
+        softmax_class = []
+        post_class_nms_classification = []
+        post_class_nms_rois = []
+        post_class_nms_boxes = []
+        for b in range(len(classification)):
+            keep = []
+            softmax_class = torch.softmax(classification[b], dim=-1)
+            for c in range(self.num_classes):
+                thr_mask = softmax_class[..., c] > 0.05
+                thr_cls = softmax_class[thr_mask]
+                thr_boxes = boxes[b][thr_mask]
+                if len(thr_boxes) == 0:
+                    keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
+                    continue
+                keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
+                keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
-                keep = torch.cat(keep, dim=0)
-                post_class_nms_classification.append(classification[b][keep])
-                post_class_nms_rois.append(flat_proposals[b][keep])
-                post_class_nms_boxes.append(boxes[b][keep])
+            keep = torch.cat(keep, dim=0)
+            post_class_nms_classification.append(softmax_class[keep])
+            post_class_nms_rois.append(flat_proposals[b][keep])
+            post_class_nms_boxes.append(boxes[b][keep])
 
-            classification = post_class_nms_classification
-            boxes = post_class_nms_boxes
+        classification = post_class_nms_classification
+        boxes = post_class_nms_boxes
             
         return HeadOutput(
             classification=classification,
