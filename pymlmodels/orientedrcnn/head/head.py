@@ -208,6 +208,11 @@ class OrientedRCNNHead(nn.Module):
                     loss = self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
                 else:
                     loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+                
+            if torch.dist.is_initialized() and torch.dist.get_world_size() > 1:
+                # prevent unused parameters (which crashes DDP)
+                # is there a better way?
+                loss = loss + torch.sum(regression) * 0
             loss = loss / len(boxes)
 
         softmax_class = []
