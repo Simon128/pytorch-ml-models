@@ -213,7 +213,7 @@ class OrientedRCNNHead(nn.Module):
                 if torchdist.is_initialized() and torchdist.get_world_size() > 1:
                     # prevent unused parameters (which crashes DDP)
                     # is there a better way?
-                    loss = loss + torch.sum(regression[b].flatten()) * 0
+                    loss.total_loss = loss.total_loss + torch.sum(regression[b].flatten()) * 0
             loss = loss / len(boxes)
 
         softmax_class = []
