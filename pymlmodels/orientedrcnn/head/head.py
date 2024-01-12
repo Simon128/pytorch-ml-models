@@ -5,6 +5,7 @@ from collections import OrderedDict
 from typing import Tuple
 import numpy as np
 import torch.nn.functional as F
+import torch.distributed as torchdist
 
 from ..utils import HeadOutput, encode, Encodings, RPNOutput, Annotation
 from .roi_align_rotated import RoIAlignRotatedWrapper
@@ -208,6 +209,11 @@ class OrientedRCNNHead(nn.Module):
                     loss = self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
                 else:
                     loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+                
+                if torchdist.is_initialized() and torchdist.get_world_size() > 1:
+                    # prevent unused parameters (which crashes DDP)
+                    # is there a better way?
+                    loss.total_loss = loss.total_loss + torch.sum(regression[b].flatten()) * 0
             loss = loss / len(boxes)
 
         softmax_class = []
