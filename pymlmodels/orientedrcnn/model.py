@@ -85,6 +85,8 @@ class OrientedRCNN(nn.Module):
             print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
             print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
 
+        print(torch.cuda.memory_summary())
+
         return OrientedRCNNOutput(
             rpn_output=rpn_out,
             anchors=anchors,

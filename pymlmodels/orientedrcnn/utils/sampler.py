@@ -46,6 +46,11 @@ class BalancedSampler(nn.Module):
             print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
             print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
             print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
+            print(f"Num anchors: {iou.shape[0]}")
+            print(f"Num gt boxes: {iou.shape[1]}")
+            print(f"Idx length: {len(pos_indices[0]) + len(neg_indices[0])}")
+            print(f"Pos idx length: {len(pos_indices[0])}")
+            print(f"Neg idx length: {len(neg_indices[0])}")
 
         available_pos = len(pos_indices[0])
         available_neg = len(neg_indices[0])
