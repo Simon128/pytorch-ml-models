@@ -39,6 +39,7 @@ class OrientedRPN(nn.Module):
         self.anchor_generator = anchor_generator
         self.sampler = sampler
         self.loss = loss
+        self.mem = []
 
         self.conv = nn.ModuleDict(
             {str(i): nn.Conv2d(self.fpn_channels, 256, 3, 1, "same") for i in range(self.fpn_level_num)}
@@ -154,12 +155,52 @@ class OrientedRPN(nn.Module):
             merged_levels = []
             merged_iou = []
 
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN/Sample] Pre iou")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
             for s_idx, k in enumerate(anchors.keys()):
                 merged_iou.append(self.rpn_anchor_iou(anchors[k][b], ground_truth_boxes[b] / self.fpn_strides[s_idx]))
                 merged_levels.append(len(merged_iou[-1]))
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN/Sample] Post iou")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
                 
             merged_iou = torch.cat(merged_iou)
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN/Sample] Post merged iou")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
             pos_indices, neg_indices = self.sampler(merged_iou)
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN/Sample] Post sampler")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
 
             _min = 0
             for s_idx, (nl, k) in enumerate(zip(merged_levels, anchors.keys())):
@@ -212,6 +253,16 @@ class OrientedRPN(nn.Module):
                 sampled_gt_objectness[k].append(gt_cls)
 
                 _min += nl
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN/Sample] Post merge")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
 
         return sampled_anchors, sampled_offsets, sampled_objectness, sampled_gt_boxes, sampled_gt_objectness, pos_masks
 
@@ -220,6 +271,16 @@ class OrientedRPN(nn.Module):
         if self.training:
             assert annotation is not None, "ground truth cannot be None if training"
         anchors = self.anchor_generator.generate_like_fpn(x, self.image_width, self.image_height, device)
+        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+        if not self.mem or \
+            max_reserved > self.mem[2]:
+            self.mem = [allocated, reserved, max_reserved]
+            print("[RPN] Post anchors")
+            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
 
         proc_proposals = OrderedDict()
         proc_objectness = OrderedDict()
@@ -241,15 +302,56 @@ class OrientedRPN(nn.Module):
             proc_anchors[k] = filtered_anchors
             proc_loss[k] = None
 
+        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+        if not self.mem or \
+            max_reserved > self.mem[2]:
+            self.mem = [allocated, reserved, max_reserved]
+            print("[RPN] Post forward and filter")
+            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
+
         if annotation is not None:
             (sampled_anchors, sampled_offsets, sampled_objectness, 
              sampled_gt_boxes, sampled_gt_objectness, pos_masks) = self.sample(anchors, all_offsets, all_objectness, annotation.boxes)
+            allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+            reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+            max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+            if not self.mem or \
+                max_reserved > self.mem[2]:
+                self.mem = [allocated, reserved, max_reserved]
+                print("[RPN] Post sample")
+                print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
         for k, v in x.items():
             if annotation is not None:
                 for b in range(len(v)):
                     pos_anchor_offsets = sampled_offsets[k][b][pos_masks[k][b]]
                     target_offsets = sampled_gt_boxes[k][b][pos_masks[k][b]]
+                    allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+                    reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+                    max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+                    if not self.mem or \
+                        max_reserved > self.mem[2]:
+                        self.mem = [allocated, reserved, max_reserved]
+                        print("[RPN] Pre loss fnc call")
+                        print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                        print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                        print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
                     temp_loss = self.loss(pos_anchor_offsets, sampled_objectness[k][b], sampled_gt_objectness[k][b] , target_offsets)
+                    allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+                    reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+                    max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+                    if not self.mem or \
+                        max_reserved > self.mem[2]:
+                        self.mem = [allocated, reserved, max_reserved]
+                        print("[RPN] Post loss fnc call")
+                        print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+                        print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+                        print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
                     if loss:
                         loss = loss + temp_loss
                     else:
@@ -261,7 +363,27 @@ class OrientedRPN(nn.Module):
 
                 proc_loss[k] = loss / len(v)
 
+        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+        if not self.mem or \
+            max_reserved > self.mem[2]:
+            self.mem = [allocated, reserved, max_reserved]
+            print("[RPN] Post loss")
+            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
         proposals, objectness, filtered_anchors = self.select_top_1000(proc_proposals, proc_objectness, proc_anchors)
+        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
+        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
+        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
+        if not self.mem or \
+            max_reserved > self.mem[2]:
+            self.mem = [allocated, reserved, max_reserved]
+            print("[RPN] Post Select Top 1000")
+            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
+            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
+            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
         test = 0
         for k in proposals.keys():
             test += proposals[k][0].shape[0]

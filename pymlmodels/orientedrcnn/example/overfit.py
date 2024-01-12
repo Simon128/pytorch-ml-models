@@ -9,6 +9,7 @@ from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torch.profiler import profile, record_function, ProfilerActivity
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
+import time
 
 from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
 from ..model import OrientedRCNN
@@ -141,7 +142,10 @@ if __name__ == "__main__":
 
     for e in range(epochs):
         optimizer.zero_grad()
+        start = time.time()
         out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
+        end = time.time()
+        print(f"time: {end-start}")
         # val test:
         #model.eval()
         #with torch.inference_mode():
