@@ -22,6 +22,7 @@ class BalancedSampler(nn.Module):
 
     def forward(self, iou: torch.Tensor):
         # force sampling on cpu as it can be memory intensive
+        iou = iou.to("cpu")
 
         allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
         reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
