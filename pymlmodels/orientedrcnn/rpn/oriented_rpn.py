@@ -117,7 +117,7 @@ class OrientedRPN(nn.Module):
             b, _, h, w = regression.shape
             regression = regression.view((b, self.num_anchors, 6, h, w)).movedim(2, -1).flatten(1, -2)
             objectness = self.objectness_branch(z).flatten(1)
-            if self.training:
+            if annotation:
                 loss = self.loss(
                     anchors[k], 
                     [b / self.fpn_strides[s_idx] for b in annotation.boxes], 
@@ -142,6 +142,6 @@ class OrientedRPN(nn.Module):
             output[k] = RPNOutput(
                 region_proposals=levelwise_proposals[k],
                 objectness_scores=levelwise_objectness[k],
-                loss=levelwise_loss[k] if self.training else None
+                loss=levelwise_loss[k] if annotation else None
             )
         return output
