@@ -107,7 +107,7 @@ class OrientedRPN(nn.Module):
     def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
         levelwise_proposals = OrderedDict()
         levelwise_objectness = OrderedDict()
-        if self.training:
+        if annotation:
             levelwise_loss = OrderedDict()
         # todo: only once
         anchors = self.anchor_generator.generate_like_fpn(x, self.image_width, self.image_height, device)
