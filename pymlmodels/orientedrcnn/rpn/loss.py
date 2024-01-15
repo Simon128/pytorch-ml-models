@@ -14,7 +14,6 @@ class RPNLoss(nn.Module):
         self.bce = nn.BCEWithLogitsLoss()
         self.sampler = sampler
 
-
     def rpn_anchor_iou(self, anchors: torch.Tensor, target_boxes: torch.Tensor):
         hbb_anchors = encode(anchors, Encodings.HBB_CENTERED, Encodings.HBB_CORNERS)
         hbb_target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.HBB_CORNERS)
@@ -28,13 +27,13 @@ class RPNLoss(nn.Module):
             objectness_predictions: torch.Tensor
         ):
         hbb_anchors = encode(anchors, Encodings.HBB_CENTERED, Encodings.HBB_CORNERS)
-        hbb_target_boxes = encode(target_boxes, Encodings.VERTICES, Encodings.HBB_CORNERS)
 
         cls_loss = 0.0
         regr_loss = 0.0
 
         for b in range(anchors.shape[0]):
-            iou = box_iou(hbb_anchors[b], hbb_target_boxes[b])
+            hbb_target_boxes = encode(target_boxes[b], Encodings.VERTICES, Encodings.HBB_CORNERS)
+            iou = box_iou(hbb_anchors[b], hbb_target_boxes)
             positives_idx, negative_idx = self.sampler(iou)
             n_pos = len(positives_idx[0])
             n_neg = len(negative_idx[0])

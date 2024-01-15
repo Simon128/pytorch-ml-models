@@ -115,7 +115,7 @@ class OrientedRPN(nn.Module):
             if self.training:
                 loss = self.loss(
                     anchors[k], 
-                    annotation.boxes / self.fpn_strides[s_idx], 
+                    [b / self.fpn_strides[s_idx] for b in annotation.boxes], 
                     regression, 
                     objectness
                 )
