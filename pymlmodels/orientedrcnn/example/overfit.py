@@ -140,17 +140,26 @@ if __name__ == "__main__":
     running_loss_total: float = 0.0
     epochs = 10000
 
+    #with profile(
+    #    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    #    schedule=torch.profiler.schedule(
+    #        wait=1,
+    #        warmup=1,
+    #        active=2
+    #    ),
+    #    record_shapes=True,
+    #    profile_memory=True,
+    #    with_stack=True,
+    #    on_trace_ready=torch.profiler.tensorboard_trace_handler('./runs/test')
+    #) as p:
     for e in range(epochs):
         optimizer.zero_grad()
-        start = time.time()
         out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
-        end = time.time()
-        print(f"time: {end-start}")
         # val test:
         #model.eval()
         #with torch.inference_mode():
         #    val_uot: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
-        #model.train()
+        #model.train(
 
         total_loss = torch.tensor(0.0)
         for k, v in out.rpn_output.items():
@@ -159,6 +168,7 @@ if __name__ == "__main__":
         total_loss = total_loss + out.head_output.loss.total_loss
         total_loss.backward()
         optimizer.step()
+        #p.step()
         running_loss_total += total_loss.item()
 
         for k, v in out.rpn_output.items():

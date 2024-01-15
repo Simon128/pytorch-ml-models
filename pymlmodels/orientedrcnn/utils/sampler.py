@@ -21,36 +21,8 @@ class BalancedSampler(nn.Module):
         self.mem = []
 
     def forward(self, iou: torch.Tensor):
-        # force sampling on cpu as it can be memory intensive
-        #iou = iou.to("cpu")
-
-        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
-        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
-        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
-        if not self.mem or \
-            max_reserved > self.mem[2]:
-            self.mem = [allocated, reserved, max_reserved]
-            print("[Sampler] Start")
-            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
-            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
-            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
         pos_indices = self.__pos_indices(iou)
         neg_indices = self.__neg_indices(iou)
-        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
-        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
-        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
-        if not self.mem or \
-            max_reserved > self.mem[2]:
-            self.mem = [allocated, reserved, max_reserved]
-            print("[Sampler] Post Idx")
-            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
-            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
-            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
-            print(f"Num anchors: {iou.shape[0]}")
-            print(f"Num gt boxes: {iou.shape[1]}")
-            print(f"Idx length: {len(pos_indices[0]) + len(neg_indices[0])}")
-            print(f"Pos idx length: {len(pos_indices[0])}")
-            print(f"Neg idx length: {len(neg_indices[0])}")
 
         available_pos = len(pos_indices[0])
         available_neg = len(neg_indices[0])
@@ -59,16 +31,6 @@ class BalancedSampler(nn.Module):
 
         choice_pos = torch.randperm(available_pos, device=iou.device)[:num_pos]
         choice_neg = torch.randperm(available_neg, device=iou.device)[:num_neg]
-        allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
-        reserved = torch.cuda.memory_reserved(0)/1024/1024/1024
-        max_reserved = torch.cuda.max_memory_reserved(0)/1024/1024/1024
-        if not self.mem or \
-            max_reserved > self.mem[2]:
-            self.mem = [allocated, reserved, max_reserved]
-            print("[Sampler] Post Randperm")
-            print("torch.cuda.memory_allocated: %fGB"%(self.mem[0]))
-            print("torch.cuda.memory_reserved: %fGB"%(self.mem[1]))
-            print("torch.cuda.max_memory_reserved: %fGB"%(self.mem[2]))
         pos_indices = (pos_indices[0][choice_pos], pos_indices[1][choice_pos])
         neg_indices = (neg_indices[0][choice_neg], neg_indices[1][choice_neg])
         allocated = torch.cuda.memory_allocated(0)/1024/1024/1024
