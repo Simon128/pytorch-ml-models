@@ -55,9 +55,14 @@ class OrientedRPN(nn.Module):
 
         for b_idx in range(len(vertices)):
             # take the top 2000 rpn proposals and apply nms
-            keep = nms(hbb[b_idx], objectness[b_idx], 0.8)
-            proposals.append(vertices[b_idx][keep])
-            scores.append(objectness[b_idx][keep])
+            topk_k = min(2000, objectness.shape[1])
+            topk_proposals = torch.topk(objectness[b_idx], k=topk_k)
+            topk_idx = topk_proposals.indices
+            topk_scores = topk_proposals.values
+            keep = nms(hbb[b_idx, topk_idx], topk_scores, 0.8)
+            topk_predictions = vertices[b_idx, topk_idx]
+            proposals.append(topk_predictions[keep])
+            scores.append(topk_scores[keep])
           
         return proposals, scores
           
