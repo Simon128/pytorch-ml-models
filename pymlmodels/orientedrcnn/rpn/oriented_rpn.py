@@ -3,6 +3,7 @@ import torch.nn as nn
 from collections import OrderedDict
 from torchvision.ops import nms
 import torch.distributed as torchdist
+import torch.nn.functional as F
 
 from .loss import RPNLoss
 from ..utils.sampler import BalancedSampler
@@ -113,6 +114,7 @@ class OrientedRPN(nn.Module):
         anchors = self.anchor_generator.generate_like_fpn(x, self.image_width, self.image_height, device)
         for s_idx, (k, v) in enumerate(x.items()):
             z = self.conv(v)
+            z = F.relu(z)
             regression = self.regression_branch(z)
             b, _, h, w = regression.shape
             regression = regression.view((b, self.num_anchors, 6, h, w)).movedim(2, -1).flatten(1, -2)
@@ -127,8 +129,6 @@ class OrientedRPN(nn.Module):
                 levelwise_loss[k] = loss
             # encode to vertices (includes midpoint offset encoding as intermediate step)
             proposals = encode(regression, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, anchors[k])
-            # horizontal NMS with IoU threshold of 0.8 to get roughly top 2000 proposals
-            # anchors only for visualization purposes
             proposals, objectness = self.__nms(proposals, objectness)
             levelwise_proposals[k] = proposals
             levelwise_objectness[k] = objectness

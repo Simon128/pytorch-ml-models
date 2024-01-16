@@ -156,8 +156,21 @@ class OrientedRCNNHead(nn.Module):
         region_proposals = OrderedDict()
         for k in proposals.keys():
             region_proposals[k] = proposals[k].region_proposals
-        
+
         aligned_feat = self.roi_align_rotated(fpn_feat, region_proposals)
+        # debug
+        #import cv2
+        #gt_box = region_proposals['2'][0][-1].detach().clone().cpu().numpy().reshape((-1, 1, 2)) * self.fpn_strides[2]
+        #img = cv2.imread('/home/simon/unibw/pytorch-ml-models/pymlmodels/orientedrcnn/example/image.tif')
+        #img = cv2.polylines(img, np.int32([gt_box]), True, (255, 0, 0), 2)
+        #cv2.imshow('image', img)
+        #while(1):
+        #    if cv2.waitKey(20) & 0xFF == 27:
+        #        cv2.destroyAllWindows()
+        #        break
+        # debug
+
+        
         flat_proposals, flat_strides = self.flatten_dict(region_proposals, strides=self.fpn_strides)
         flat_features = self.flatten_dict(aligned_feat)
             
