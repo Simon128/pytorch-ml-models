@@ -127,6 +127,10 @@ class OrientedRPN(nn.Module):
                     objectness
                 )
                 levelwise_loss[k] = loss
+                if torchdist.is_initialized() and torchdist.get_world_size() > 1:
+                    # prevent unused parameters (which crashes DDP)
+                    # is there a better way?
+                    loss.total_loss = loss.total_loss + torch.sum(objectness * 0)
             # encode to vertices (includes midpoint offset encoding as intermediate step)
             proposals = encode(regression, Encodings.ANCHOR_OFFSET, Encodings.VERTICES, anchors[k])
             proposals, objectness = self.__nms(proposals, objectness)
