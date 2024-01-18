@@ -202,6 +202,11 @@ class OrientedRCNNHead(nn.Module):
                     positive_boxes = regression[b][:positives[b]]
                     target_boxes = sampled_ground_truth_boxes[b]
                     fp = boxes[b][:positives[b]]
+                else:
+                    pos_idx = sampled_indices[b][:positives[b]]
+                    positive_boxes = regression[b][pos_idx]
+                    target_boxes = sampled_ground_truth_boxes[b]
+                    fp = boxes[b][pos_idx]
                 rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
                 rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
