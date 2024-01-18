@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.distributed as torchdist
 
-from ..utils import HeadOutput, encode, Encodings, RPNOutput, Annotation
+from ..utils import HeadOutput, encode, Encodings, RPNOutput, Annotation, LossOutput
 from .roi_align_rotated import RoIAlignRotatedWrapper
 from ..ops import nms_rotated
 from ..ops import pairwise_iou_rotated
@@ -85,7 +85,9 @@ class OrientedRCNNHead(nn.Module):
             n_pos, n_neg = len(pos_indices[0]), len(neg_indices[0])
             positives.append(n_pos)
 
-            sampled_indices.append(torch.cat((pos_indices[0], neg_indices[0])))
+            all_indices = torch.cat((pos_indices[0], neg_indices[0]))
+            sampled_indices.append(all_indices)
+
             sampled_ground_truth_boxes.append(targets[pos_indices[1]])
             gt_cls = torch.full((n_pos + n_neg,), background_cls, device=device) #type: ignore
             gt_cls[:n_pos] = ground_truth_cls[b][pos_indices[1]]
@@ -118,15 +120,19 @@ class OrientedRCNNHead(nn.Module):
         num_batches = len(list(tensor_dict.values())[0])
         device = list(tensor_dict.values())[0][0].device
         flat = [None] * num_batches
+        flat_keys = [None] * num_batches
         if strides is not None:
             flat_strides = [None] * num_batches
 
         for s_idx, k in enumerate(list(tensor_dict.keys())):
             for b in range(num_batches):
+                new_flat_keys = torch.full((len(tensor_dict[k][b]),), fill_value=k, device=tensor_dict[k][b].device)
                 if flat[b] is None:
                     flat[b] = tensor_dict[k][b]
+                    flat_keys[b] = new_flat_keys
                 else:
                     flat[b] = torch.cat((flat[b], tensor_dict[k][b]))
+                    flat_keys[b] =  torch.cat((flat_keys[b], new_flat_keys))
 
                 if strides is not None and flat_strides[b] is None:
                     flat_strides[b] = torch.full((tensor_dict[k][b].shape[0],), strides[s_idx]).to(device)
@@ -139,9 +145,9 @@ class OrientedRCNNHead(nn.Module):
                 del tensor_dict[k]
 
         if strides:
-            return flat, flat_strides
+            return flat, flat_strides, flat_keys
         else:
-            return flat
+            return flat, flat_keys
 
     def forward(
             self, 
@@ -150,38 +156,29 @@ class OrientedRCNNHead(nn.Module):
             ground_truth: Annotation | None = None
         ):
         if self.training and self.inject_annotation:
-            assert ground_truth is not None, "ground truth cannot be None during training"
             self._inject_annotations(proposals, ground_truth)
 
         region_proposals = OrderedDict()
         for k in proposals.keys():
             region_proposals[k] = proposals[k].region_proposals
 
-        aligned_feat = self.roi_align_rotated(fpn_feat, region_proposals)
-        # debug
-        #import cv2
-        #gt_box = region_proposals['2'][0][-1].detach().clone().cpu().numpy().reshape((-1, 1, 2)) * self.fpn_strides[2]
-        #img = cv2.imread('/home/simon/unibw/pytorch-ml-models/pymlmodels/orientedrcnn/example/image.tif')
-        #img = cv2.polylines(img, np.int32([gt_box]), True, (255, 0, 0), 2)
-        #cv2.imshow('image', img)
-        #while(1):
-        #    if cv2.waitKey(20) & 0xFF == 27:
-        #        cv2.destroyAllWindows()
-        #        break
-        # debug
+        flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides)
 
-        
-        flat_proposals, flat_strides = self.flatten_dict(region_proposals, strides=self.fpn_strides)
-        flat_features = self.flatten_dict(aligned_feat)
-            
-        # preventing torch stack because it copies data
-        # -> large max mem allocation
-        try:
-            post_fc = [self.fc(ff.unsqueeze(0)) for ff in flat_features]
-        except:
-            for ff in flat_features:
-                print(ff.shape)
-            raise ValueError()
+        if ground_truth is not None:
+            sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
+                flat_proposals,
+                flat_strides,
+                ground_truth.boxes,
+                ground_truth.classifications
+            )
+            if self.training:
+                for b in range(len(flat_proposals)):
+                    flat_proposals[b] = flat_proposals[b][sampled_indices[b]]
+                    flat_strides[b] = flat_strides[b][sampled_indices[b]]
+                    flat_keys[b] = flat_keys[b][sampled_indices[b]]
+
+        aligned_feat = self.roi_align_rotated(fpn_feat, flat_proposals, flat_keys)
+        post_fc = [self.fc(ff.unsqueeze(0)) for ff in aligned_feat]
         classification = [self.classification(pf).squeeze(0) for pf in post_fc]
         regression = [self.regression(pf).squeeze(0) for pf in post_fc]
 
@@ -197,36 +194,25 @@ class OrientedRCNNHead(nn.Module):
             boxes_a = efp[..., 4] + regression[b][..., 4]
             boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
             boxes[-1][..., :-1] = boxes[-1][..., :-1] * flat_strides[b].unsqueeze(-1)
-        loss = None
+        loss = LossOutput(0, 0, 0)
 
         if ground_truth is not None:
-            sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
-                flat_proposals,
-                flat_strides,
-                ground_truth.boxes,
-                ground_truth.classifications
-            )
-
             for b in range(len(boxes)):
-                pos_idx = sampled_indices[b][:positives[b]]
-                positive_boxes = regression[b][pos_idx]
-                target_boxes = sampled_ground_truth_boxes[b]
-                fp = encode(flat_proposals[b][pos_idx] * flat_strides[b][pos_idx][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+                if self.training:
+                    positive_boxes = regression[b][:positives[b]]
+                    target_boxes = sampled_ground_truth_boxes[b]
+                    fp = boxes[b][:positives[b]]
                 rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
                 rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
                 rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
                 rel_target_da = target_boxes[..., 4] - fp[..., 4]
                 rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
-                if loss is None:
-                    loss = self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+                if self.training: 
+                    loss += self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
                 else:
-                    loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+                    loss += self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
                 
-                if torchdist.is_initialized() and torchdist.get_world_size() > 1:
-                    # prevent unused parameters (which crashes DDP)
-                    # is there a better way?
-                    loss.total_loss = loss.total_loss + torch.sum(regression[b].flatten()) * 0
             loss = loss / len(boxes)
 
         softmax_class = []

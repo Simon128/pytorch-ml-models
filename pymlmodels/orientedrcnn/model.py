@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch
+from typing import OrderedDict
 
 from .rpn import OrientedRPN, FPNAnchorGenerator
 from .head import OrientedRCNNHead
@@ -21,12 +22,17 @@ class OrientedRCNN(nn.Module):
     def forward(self, x: torch.Tensor, annotation: Annotation | None = None):
         _, _, h, w = x.shape
         feat = self.backbone(x)
-        rpn_out = self.oriented_rpn(feat, annotation, x.device)
-        anchors = self.anchor_generator.generate_like_fpn(feat, w, h, x.device)
-        head_out = self.head(rpn_out, feat, annotation)
+
+        numerical_ordered_feat = OrderedDict()
+        for idx, v in enumerate(feat.values()):
+            numerical_ordered_feat[idx] = v
+
+        rpn_out = self.oriented_rpn(numerical_ordered_feat, annotation, x.device, x)
+        anchors = self.anchor_generator.generate_like_fpn(numerical_ordered_feat, w, h, x.device)
+        head_out = self.head(rpn_out, numerical_ordered_feat, annotation)
         return OrientedRCNNOutput(
             rpn_output=rpn_out,
             anchors=anchors,
-            backbone_output=feat,
+            backbone_output=numerical_ordered_feat,
             head_output=head_out
         )

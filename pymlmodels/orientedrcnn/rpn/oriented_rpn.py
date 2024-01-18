@@ -105,7 +105,7 @@ class OrientedRPN(nn.Module):
 
         return result_vertices, result_objectness
 
-    def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
+    def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu"), images = None):
         levelwise_proposals = OrderedDict()
         levelwise_objectness = OrderedDict()
         if annotation:
