@@ -48,7 +48,7 @@ class OrientedRCNNHead(nn.Module):
             fpn_strides=self.fpn_strides[:-1]
         )
         self.fc = nn.Sequential(
-            nn.Flatten(start_dim=2),
+            nn.Flatten(start_dim=1),
             nn.Linear(in_channels * roi_align_size[0] * roi_align_size[1], out_channels),
             nn.ReLU(),
             nn.Linear(out_channels, out_channels),
@@ -82,10 +82,10 @@ class OrientedRCNNHead(nn.Module):
             iou = pairwise_iou_rotated(regions, targets)
 
             pos_indices, neg_indices = self.sampler(iou)
-            n_pos, n_neg = len(pos_indices[0]), len(neg_indices[0])
+            n_pos, n_neg = len(pos_indices[0]), len(neg_indices)
             positives.append(n_pos)
 
-            all_indices = torch.cat((pos_indices[0], neg_indices[0]))
+            all_indices = torch.cat((pos_indices[0], neg_indices))
             sampled_indices.append(all_indices)
 
             sampled_ground_truth_boxes.append(targets[pos_indices[1]])
@@ -97,12 +97,16 @@ class OrientedRCNNHead(nn.Module):
 
     def _inject_annotations(self, proposals: OrderedDict[str, RPNOutput], ground_truth: Annotation):
         device = ground_truth.boxes[0].device
-        for s_idx, k in enumerate(proposals.keys()):
-            stride = self.fpn_strides[s_idx]
+        for k in proposals.keys():
+            stride = self.fpn_strides[k]
             for b in range(len(proposals[k].region_proposals)):
-                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
+                #rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
+                #rois_obj = torch.cat([
+                #    proposals[k].objectness_scores[b], 
+                #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
+                #])
+                rois = torch.cat([ground_truth.boxes[b] / stride])
                 rois_obj = torch.cat([
-                    proposals[k].objectness_scores[b], 
                     torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 ])
                 proposals[k].region_proposals[b] = rois
@@ -121,24 +125,24 @@ class OrientedRCNNHead(nn.Module):
         device = list(tensor_dict.values())[0][0].device
         flat = [None] * num_batches
         flat_keys = [None] * num_batches
-        if strides is not None:
-            flat_strides = [None] * num_batches
+        flat_strides = [None] * num_batches
 
-        for s_idx, k in enumerate(list(tensor_dict.keys())):
+        for k in list(tensor_dict.keys()):
             for b in range(num_batches):
-                new_flat_keys = torch.full((len(tensor_dict[k][b]),), fill_value=k, device=tensor_dict[k][b].device)
+                new_flat_keys = torch.full((len(tensor_dict[k][b]),), fill_value=int(k), device=device)
                 if flat[b] is None:
-                    flat[b] = tensor_dict[k][b]
-                    flat_keys[b] = new_flat_keys
+                    flat[b] = tensor_dict[k][b] #type: ignore
+                    flat_keys[b] = new_flat_keys #type: ignore
                 else:
-                    flat[b] = torch.cat((flat[b], tensor_dict[k][b]))
-                    flat_keys[b] =  torch.cat((flat_keys[b], new_flat_keys))
+                    flat[b] = torch.cat((flat[b], tensor_dict[k][b])) #type: ignore
+                    flat_keys[b] =  torch.cat((flat_keys[b], new_flat_keys)) #type: ignore
 
-                if strides is not None and flat_strides[b] is None:
-                    flat_strides[b] = torch.full((tensor_dict[k][b].shape[0],), strides[s_idx]).to(device)
-                elif strides is not None:
-                    s = torch.full((tensor_dict[k][b].shape[0],), strides[s_idx]).to(device)
-                    flat_strides[b] = torch.cat((flat_strides[b], s))
+                if strides is not None:
+                    s = torch.full((tensor_dict[k][b].shape[0],), strides[int(k)], device=device)
+                    if flat_strides[b] is None:
+                        flat_strides[b] = s # type:ignore
+                    else:
+                        flat_strides[b] = torch.cat((flat_strides[b], s)) #type: ignore
 
             # free up mem
             if free_memory:
@@ -156,18 +160,18 @@ class OrientedRCNNHead(nn.Module):
             ground_truth: Annotation | None = None
         ):
         if self.training and self.inject_annotation:
-            self._inject_annotations(proposals, ground_truth)
+            self._inject_annotations(proposals, ground_truth) # type:ignore
 
         region_proposals = OrderedDict()
         for k in proposals.keys():
             region_proposals[k] = proposals[k].region_proposals
 
-        flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides)
+        flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
 
         if ground_truth is not None:
             sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
-                flat_proposals,
-                flat_strides,
+                flat_proposals, # type:ignore
+                flat_strides, # type:ignore
                 ground_truth.boxes,
                 ground_truth.classifications
             )
@@ -177,10 +181,39 @@ class OrientedRCNNHead(nn.Module):
                     flat_strides[b] = flat_strides[b][sampled_indices[b]]
                     flat_keys[b] = flat_keys[b][sampled_indices[b]]
 
+        # debug
+        #import cv2
+        #import numpy as np
+        #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/pymlmodels/orientedrcnn/example/image.tif")
+        #t_img = torch.from_numpy(image).permute((2, 0, 1)).unsqueeze(0).to("cuda") 
+        ##for p, k in zip(flat_proposals[0], flat_keys[0]):
+        ##    pts = p.detach().clone().cpu().numpy().copy() * self.fpn_strides[k]
+        ##    image = cv2.polylines(image, np.array([pts], dtype=np.int32), True, (255,0,0), 2)
+
+
+        #test_input = {k: t_img.float() / 255 for k in fpn_feat.keys()}
+        #test_roi = self.roi_align_rotated(
+        #    test_input, 
+        #    torch.stack([fp * self.fpn_strides[k] for fp, k in zip(flat_proposals[0], flat_keys[0])]).unsqueeze(0).float(),
+        #    [torch.zeros_like(flat_keys[0])]
+        #)
+
+        #for idx in range(len(test_roi[0])):
+        #    pts = flat_proposals[0][idx].detach().clone().cpu().numpy().copy() * self.fpn_strides[flat_keys[0][idx]]
+        #    image_temp = cv2.polylines(image.copy(), np.array([pts], dtype=np.int32), True, (255,0,0), 2)
+        #    roi_img = test_roi[0][idx].detach().clone().cpu().permute((1, 2, 0)).numpy()
+        #    cv2.imshow("image", image_temp)
+        #    cv2.imshow("roi", roi_img)
+        #    while (1):
+        #        if cv2.waitKey(20) & 0xFF == 27:
+        #            break
+        #    cv2.destroyAllWindows()
+
+
         aligned_feat = self.roi_align_rotated(fpn_feat, flat_proposals, flat_keys)
-        post_fc = [self.fc(ff.unsqueeze(0)) for ff in aligned_feat]
-        classification = [self.classification(pf).squeeze(0) for pf in post_fc]
-        regression = [self.regression(pf).squeeze(0) for pf in post_fc]
+        post_fc = [self.fc(ff) for ff in aligned_feat]
+        classification = [self.classification(pf) for pf in post_fc]
+        regression = [self.regression(pf) for pf in post_fc]
 
         # see https://arxiv.org/pdf/1311.2524.pdf
         clamp_v = np.abs(np.log(16/1000))
@@ -229,26 +262,27 @@ class OrientedRCNNHead(nn.Module):
         post_class_nms_classification = []
         post_class_nms_rois = []
         post_class_nms_boxes = []
-        for b in range(len(classification)):
-            keep = []
-            softmax_class = torch.softmax(classification[b], dim=-1)
-            for c in range(self.num_classes):
-                thr_mask = softmax_class[..., c] > 0.05
-                thr_cls = softmax_class[thr_mask]
-                thr_boxes = boxes[b][thr_mask]
-                if len(thr_boxes) == 0:
-                    keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
-                    continue
-                keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
-                keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
+        if not self.training:
+            for b in range(len(classification)):
+                keep = []
+                softmax_class = torch.softmax(classification[b], dim=-1)
+                for c in range(self.num_classes):
+                    thr_mask = softmax_class[..., c] > 0.05
+                    thr_cls = softmax_class[thr_mask]
+                    thr_boxes = boxes[b][thr_mask]
+                    if len(thr_boxes) == 0:
+                        keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
+                        continue
+                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
+                    keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
-            keep = torch.cat(keep, dim=0)
-            post_class_nms_classification.append(softmax_class[keep])
-            post_class_nms_rois.append(flat_proposals[b][keep])
-            post_class_nms_boxes.append(boxes[b][keep])
+                keep = torch.cat(keep, dim=0)
+                post_class_nms_classification.append(softmax_class[keep])
+                post_class_nms_rois.append(flat_proposals[b][keep])
+                post_class_nms_boxes.append(boxes[b][keep])
 
-        classification = post_class_nms_classification
-        boxes = post_class_nms_boxes
+            classification = post_class_nms_classification
+            boxes = post_class_nms_boxes
             
         return HeadOutput(
             classification=classification,

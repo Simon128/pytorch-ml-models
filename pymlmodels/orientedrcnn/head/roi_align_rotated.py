@@ -126,31 +126,39 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         height, width = size
         x = x.clamp(min=0, max=width)
         y = y.clamp(min=0, max=height)
-        return torch.cat((x, y), dim=-1)
+        return torch.stack((x, y), dim=-1)
 
     def process_rpn_proposals(
             self, 
-            rpn_proposals: list[torch.Tensor]
+            rpn_proposals: list[torch.Tensor],
+            keys: list[torch.Tensor]
         ):
+        for k in range(torch.max(keys[0]).item()):
+            for b in range(len(rpn_proposals)):
+                mask = k == keys[b]
+                rpn_proposals[b][mask] = self.clip_vertices(
+                    rpn_proposals[b][mask],
+                    (800 / self.fpn_strides[k], 600 / self.fpn_strides[k])
+                )
         result = [None] * len(rpn_proposals)
         for b_idx in range(len(rpn_proposals)):
             roi_format = encode(rpn_proposals[b_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
             roi_format[..., -1] = roi_format[..., -1] * -1
             n = roi_format.shape[0]
             b_idx_tensor = torch.full((n, 1), b_idx, device=roi_format.device)
-            result[b_idx] = torch.concatenate((b_idx_tensor, roi_format), dim=-1)
-        return torch.concatenate(result, dim=0)
+            result[b_idx] = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
+        return torch.concatenate(result, dim=0) # type:ignore
 
     def forward(
             self, 
             fpn_features: OrderedDict, 
-            rpn_proposals: list[torch.tensor], 
-            keys: list[torch.tensor]
+            rpn_proposals: list[torch.Tensor], 
+            keys: list[torch.Tensor]
         ):
         num_batches = len(rpn_proposals)
         channels = fpn_features[0].shape[1]
         device = rpn_proposals[0].device
-        roi_format = self.process_rpn_proposals(rpn_proposals)
+        roi_format = self.process_rpn_proposals(rpn_proposals, keys)
         cat_keys = torch.cat(keys)
         output = [
             torch.zeros((len(rpn_proposals[b]), channels, *self.output_size), device=device) 

@@ -36,8 +36,8 @@ class RPNLoss(nn.Module):
             iou = box_iou(hbb_anchors[b], hbb_target_boxes)
             positives_idx, negative_idx = self.sampler(iou)
             n_pos = len(positives_idx[0])
-            n_neg = len(negative_idx[0])
-            all_pred_idx = torch.cat((positives_idx[0], negative_idx[0]))
+            n_neg = len(negative_idx)
+            all_pred_idx = torch.cat((positives_idx[0], negative_idx))
             sampled_obj_pred = objectness_predictions[b][all_pred_idx]
             sampled_obj_pred = torch.where(sampled_obj_pred == 0, 1e-7, sampled_obj_pred)
             target_objectness = torch.cat([torch.ones(n_pos), torch.zeros(n_neg)]).to(iou.device)

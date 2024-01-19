@@ -25,14 +25,14 @@ class BalancedSampler(nn.Module):
         neg_indices = self.__neg_indices(iou)
 
         available_pos = len(pos_indices[0])
-        available_neg = len(neg_indices[0])
+        available_neg = len(neg_indices)
         num_pos = min(self.n_positives, available_pos)
         num_neg = min(self.n_samples - num_pos, available_neg)
 
         choice_pos = torch.randperm(available_pos, device=iou.device)[:num_pos]
         choice_neg = torch.randperm(available_neg, device=iou.device)[:num_neg]
         pos_indices = (pos_indices[0][choice_pos], pos_indices[1][choice_pos])
-        neg_indices = (neg_indices[0][choice_neg], neg_indices[1][choice_neg])
+        neg_indices = neg_indices[choice_neg]
 
         return pos_indices, neg_indices
 
@@ -56,4 +56,4 @@ class BalancedSampler(nn.Module):
         return (torch.cat((above[0], inbetween[0])), torch.cat((above[1], inbetween[1])))
 
     def __neg_indices(self, iou: torch.Tensor):
-        return (iou < self.neg_thr).nonzero(as_tuple=True)
+        return ((iou < self.neg_thr).sum(dim=1) == iou.shape[1]).nonzero(as_tuple=True)[0]

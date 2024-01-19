@@ -132,7 +132,7 @@ if __name__ == "__main__":
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=1e-4, momentum=0.9, weight_decay=1e-5)
+        ], lr=1e-4, momentum=0.0, weight_decay=0)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1500, gamma=0.1)
 
     running_loss_rpn: LossOutput | None = None
