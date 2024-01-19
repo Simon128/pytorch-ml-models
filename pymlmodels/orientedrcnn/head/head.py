@@ -262,27 +262,26 @@ class OrientedRCNNHead(nn.Module):
         post_class_nms_classification = []
         post_class_nms_rois = []
         post_class_nms_boxes = []
-        if not self.training:
-            for b in range(len(classification)):
-                keep = []
-                softmax_class = torch.softmax(classification[b], dim=-1)
-                for c in range(self.num_classes):
-                    thr_mask = softmax_class[..., c] > 0.05
-                    thr_cls = softmax_class[thr_mask]
-                    thr_boxes = boxes[b][thr_mask]
-                    if len(thr_boxes) == 0:
-                        keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
-                        continue
-                    keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
-                    keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
+        for b in range(len(classification)):
+            keep = []
+            softmax_class = torch.softmax(classification[b], dim=-1)
+            for c in range(self.num_classes):
+                thr_mask = softmax_class[..., c] > 0.05
+                thr_cls = softmax_class[thr_mask]
+                thr_boxes = boxes[b][thr_mask]
+                if len(thr_boxes) == 0:
+                    keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
+                    continue
+                keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
+                keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
-                keep = torch.cat(keep, dim=0)
-                post_class_nms_classification.append(softmax_class[keep])
-                post_class_nms_rois.append(flat_proposals[b][keep])
-                post_class_nms_boxes.append(boxes[b][keep])
+            keep = torch.cat(keep, dim=0)
+            post_class_nms_classification.append(softmax_class[keep])
+            post_class_nms_rois.append(flat_proposals[b][keep])
+            post_class_nms_boxes.append(boxes[b][keep])
 
-            classification = post_class_nms_classification
-            boxes = post_class_nms_boxes
+        classification = post_class_nms_classification
+        boxes = post_class_nms_boxes
             
         return HeadOutput(
             classification=classification,
