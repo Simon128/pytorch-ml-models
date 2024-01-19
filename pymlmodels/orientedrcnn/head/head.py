@@ -100,15 +100,15 @@ class OrientedRCNNHead(nn.Module):
         for k in proposals.keys():
             stride = self.fpn_strides[k]
             for b in range(len(proposals[k].region_proposals)):
-                #rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
-                #rois_obj = torch.cat([
-                #    proposals[k].objectness_scores[b], 
-                #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
-                #])
-                rois = torch.cat([ground_truth.boxes[b] / stride])
+                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
                 rois_obj = torch.cat([
+                    proposals[k].objectness_scores[b], 
                     torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 ])
+                #rois = torch.cat([ground_truth.boxes[b] / stride])
+                #rois_obj = torch.cat([
+                #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
+                #])
                 proposals[k].region_proposals[b] = rois
                 proposals[k].objectness_scores[b] = rois_obj
 
