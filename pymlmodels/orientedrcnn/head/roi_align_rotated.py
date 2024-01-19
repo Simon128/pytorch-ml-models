@@ -130,16 +130,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
     def process_rpn_proposals(
             self, 
-            rpn_proposals: list[torch.Tensor],
-            keys: list[torch.Tensor]
+            rpn_proposals: list[torch.Tensor]
         ):
-        for k in range(torch.max(keys[0]).item()):
-            for b in range(len(rpn_proposals)):
-                mask = k == keys[b]
-                rpn_proposals[b][mask] = self.clip_vertices(
-                    rpn_proposals[b][mask],
-                    (800 / self.fpn_strides[k], 600 / self.fpn_strides[k])
-                )
         result = [None] * len(rpn_proposals)
         for b_idx in range(len(rpn_proposals)):
             roi_format = encode(rpn_proposals[b_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
@@ -158,7 +150,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         num_batches = len(rpn_proposals)
         channels = fpn_features[0].shape[1]
         device = rpn_proposals[0].device
-        roi_format = self.process_rpn_proposals(rpn_proposals, keys)
+        roi_format = self.process_rpn_proposals(rpn_proposals)
         cat_keys = torch.cat(keys)
         output = [
             torch.zeros((len(rpn_proposals[b]), channels, *self.output_size), device=device) 
