@@ -132,8 +132,8 @@ if __name__ == "__main__":
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=1e-4, momentum=0.0, weight_decay=0)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1500, gamma=0.1)
+        ], lr=0.005, momentum=0.9, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
 
     running_loss_rpn: LossOutput | None = None
     running_loss_head: LossOutput | None = None
@@ -152,6 +152,7 @@ if __name__ == "__main__":
     #    with_stack=True,
     #    on_trace_ready=torch.profiler.tensorboard_trace_handler('./runs/test')
     #) as p:
+    last_total_loss = 0
     for e in range(epochs):
         optimizer.zero_grad()
         out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
@@ -166,6 +167,9 @@ if __name__ == "__main__":
             total_loss = total_loss + v.loss.total_loss
 
         total_loss = total_loss + out.head_output.loss.total_loss
+        if total_loss > last_total_loss + 1:
+            test =5
+        last_total_loss = total_loss.detach().clone()
         total_loss.backward()
         optimizer.step()
         #p.step()

@@ -3,9 +3,12 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from typing import Tuple
+import math
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as torchdist
+from mmcv.ops.box_iou_rotated import box_iou_rotated
+from torchvision.ops import box_iou
 
 from ..utils import HeadOutput, encode, Encodings, RPNOutput, Annotation, LossOutput
 from .roi_align_rotated import RoIAlignRotatedWrapper
@@ -77,10 +80,20 @@ class OrientedRCNNHead(nn.Module):
         sampled_ground_truth_cls = []
         
         for b in range(n_batches):
+            #regions = encode(proposals[b] * strides[b][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            #targets = encode(ground_truth_boxes[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            #regions[..., -1] = regions[..., -1] * (math.pi/180)
+            #targets[..., -1] = targets[..., -1] * (math.pi/180)
+
+            #iou = box_iou_rotated(regions, targets)
+            regions = encode(proposals[b] * strides[b][:, None, None], Encodings.VERTICES, Encodings.HBB_CORNERS)
+            targets = encode(ground_truth_boxes[b], Encodings.VERTICES, Encodings.HBB_CORNERS)
+
+            iou = box_iou(regions, targets)
+
             regions = encode(proposals[b] * strides[b][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
             targets = encode(ground_truth_boxes[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-            iou = pairwise_iou_rotated(regions, targets)
-
+            ####
             pos_indices, neg_indices = self.sampler(iou)
             n_pos, n_neg = len(pos_indices[0]), len(neg_indices)
             positives.append(n_pos)
@@ -100,15 +113,15 @@ class OrientedRCNNHead(nn.Module):
         for k in proposals.keys():
             stride = self.fpn_strides[k]
             for b in range(len(proposals[k].region_proposals)):
-                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
-                rois_obj = torch.cat([
-                    proposals[k].objectness_scores[b], 
-                    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
-                ])
-                #rois = torch.cat([ground_truth.boxes[b] / stride])
+                #rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
                 #rois_obj = torch.cat([
+                #    proposals[k].objectness_scores[b], 
                 #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 #])
+                rois = torch.cat([ground_truth.boxes[b] / stride])
+                rois_obj = torch.cat([
+                    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
+                ])
                 proposals[k].region_proposals[b] = rois
                 proposals[k].objectness_scores[b] = rois_obj
 
@@ -144,10 +157,6 @@ class OrientedRCNNHead(nn.Module):
                     else:
                         flat_strides[b] = torch.cat((flat_strides[b], s)) #type: ignore
 
-            # free up mem
-            if free_memory:
-                del tensor_dict[k]
-
         if strides:
             return flat, flat_strides, flat_keys
         else:
@@ -177,9 +186,9 @@ class OrientedRCNNHead(nn.Module):
             )
             if self.training:
                 for b in range(len(flat_proposals)):
-                    flat_proposals[b] = flat_proposals[b][sampled_indices[b]]
-                    flat_strides[b] = flat_strides[b][sampled_indices[b]]
-                    flat_keys[b] = flat_keys[b][sampled_indices[b]]
+                    flat_proposals[b] = flat_proposals[b][sampled_indices[b]] # type:ignore
+                    flat_strides[b] = flat_strides[b][sampled_indices[b]] # type:ignore
+                    flat_keys[b] = flat_keys[b][sampled_indices[b]] # type:ignore
 
         # debug
         #import cv2

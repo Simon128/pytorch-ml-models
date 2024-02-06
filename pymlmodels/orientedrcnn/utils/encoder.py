@@ -414,19 +414,19 @@ class Encoder:
         repeat = tuple(repeat_list)
         # torch argmin returns the first minial vertex
         # this is fine, if the angle is not pi/2 (axis aligned)
-        min_y_idx = torch.argmin(vertices[..., 1], dim=-1, keepdim=True)
+        min_y_idx = torch.argmax(vertices[..., 1], dim=-1, keepdim=True)
         min_y_tensors = torch.gather(vertices, -2, min_y_idx.unsqueeze(-1).repeat(repeat))
 
         # however, if the angle is pi/2, then we have two min x vertices
         # we need to check, which on is the bot one (larger y)
         # for this, we just flip the order of the vertices and use argmax
         flipped_vertices = torch.flip(vertices, dims=(-2,))
-        min_y_idx_second = torch.argmin(flipped_vertices[..., 1], dim=-1, keepdim=True)
+        min_y_idx_second = torch.argmax(flipped_vertices[..., 1], dim=-1, keepdim=True)
         min_y_tensors_second = torch.gather(flipped_vertices, -2, min_y_idx_second.unsqueeze(-1).repeat(repeat))
 
         # now we just take the vertices with larger y 
         tensors = torch.where(
-            min_y_tensors[..., 1].unsqueeze(-1).repeat(repeat) > min_y_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
+            min_y_tensors[..., 0].unsqueeze(-1).repeat(repeat) > min_y_tensors_second[..., 0].unsqueeze(-1).repeat(repeat), 
             min_y_tensors_second, 
             min_y_tensors
         )
@@ -451,8 +451,8 @@ class Encoder:
         # now we just take the vertices with larger x 
         tensors = torch.where(
             max_x_tensors[..., 1].unsqueeze(-1).repeat(repeat) > max_x_tensors_second[..., 1].unsqueeze(-1).repeat(repeat), 
-            max_x_tensors_second, 
-            max_x_tensors
+            max_x_tensors, 
+            max_x_tensors_second
         )
         return tensors
 
@@ -504,6 +504,7 @@ class Encoder:
         if specific == Encodings.THETA_FORMAT_TL_RT:
             # CLOCKWISE ANGLE
             tl_vertices = self.__get_top_left_vertices(vertices)
+            bl_vertices = self.__get_bot_left_vertices(vertices)
             rt_vertices = self.__get_right_top_vertices(vertices)
             lb_vertices = self.__get_left_bot_vertices(vertices)
             ref_vector = rt_vertices - tl_vertices
@@ -511,18 +512,19 @@ class Encoder:
             ref_vector[..., 1] = ref_vector[..., 1] * -1
 
             width = torch.norm(ref_vector, dim=-1)
-            height = torch.norm(lb_vertices - tl_vertices, dim=-1)
+            height = torch.norm(bl_vertices - tl_vertices, dim=-1)
             center = rt_vertices + (lb_vertices - rt_vertices) / 2
 
         elif specific == Encodings.THETA_FORMAT_BL_RB:
             # COUNTER CLOCKWISE ANGLE
+            tl_vertices = self.__get_top_left_vertices(vertices)
             bl_vertices = self.__get_bot_left_vertices(vertices)
             rb_vertices = self.__get_right_bot_vertices(vertices)
             lt_vertices = self.__get_left_top_vertices(vertices)
             ref_vector = rb_vertices - bl_vertices
 
             width = torch.norm(ref_vector, dim=-1)
-            height = torch.norm(bl_vertices - lt_vertices, dim=-1)
+            height = torch.norm(bl_vertices - tl_vertices, dim=-1)
             center = lt_vertices + (rb_vertices - lt_vertices) / 2
         else:
             raise ValueError(f"{specific} not supported as theta format")

@@ -1,6 +1,8 @@
 Extracted and slightly modified from https://github.com/facebookresearch/detectron2
+and https://github.com/open-mmlab/mmcv
 
 Copyright (c) Facebook, Inc. and its affiliates.
+and Copyright (c) OpenMMLab. All rights reserved.
 
 Changes:
 
