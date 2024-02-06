@@ -542,7 +542,7 @@ class Encoder:
         temp_height = torch.where(angle == np.pi / 2, width, height)
         width = torch.where(angle == np.pi / 2, height, width)
         height = temp_height
-        angle = angle * 180 / np.pi
+        angle = (angle * 180 / np.pi) * -1
 
         return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 
