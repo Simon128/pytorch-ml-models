@@ -159,9 +159,12 @@ class OrientedRCNNHead(nn.Module):
         if self.training and self.inject_annotation:
             self._inject_annotations(proposals, ground_truth) # type:ignore
 
+        # detaching proposals is key to prevent gradient 
+        # propagation from head to RPN, resulting in 
+        # RPN and head "combating" each other
         region_proposals = OrderedDict()
         for k in proposals.keys():
-            region_proposals[k] = proposals[k].region_proposals
+            region_proposals[k] = [p.detach() for p in proposals[k].region_proposals]
 
         flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
 
