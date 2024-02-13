@@ -157,7 +157,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
 
             for k in fpn_features.keys():
                 mask = keys[b] == k
-                roi_align = super().forward(fpn_features[k], _in[mask])
+                roi_align = super().forward(fpn_features[k][b].unsqueeze(0), _in[mask])
                 _output[mask] = roi_align.float()
 
             output.append(_output)
