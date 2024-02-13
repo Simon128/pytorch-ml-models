@@ -152,7 +152,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         for b in range(len(rpn_proposals)):
             _output = torch.zeros((len(rpn_proposals[b]),channels,*self.output_size), device=device)
             roi_format = encode(rpn_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-            b_idx_tensor = torch.full((len(rpn_proposals[b]), 1), b, device=roi_format.device)
+            b_idx_tensor = torch.full((len(rpn_proposals[b]), 1), 0, device=roi_format.device)
             _in = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
 
             for k in fpn_features.keys():
