@@ -507,12 +507,13 @@ class Encoder:
             bl_vertices = self.__get_bot_left_vertices(vertices)
             rt_vertices = self.__get_right_top_vertices(vertices)
             lb_vertices = self.__get_left_bot_vertices(vertices)
+            lt_vertices = self.__get_left_top_vertices(vertices)
             ref_vector = rt_vertices - tl_vertices
             # reversed y-axis (clockwise angle)
             ref_vector[..., 1] = ref_vector[..., 1] * -1
 
             width = torch.norm(ref_vector, dim=-1)
-            height = torch.norm(bl_vertices - tl_vertices, dim=-1)
+            height = torch.norm(bl_vertices - rt_vertices, dim=-1)
             center = rt_vertices + (lb_vertices - rt_vertices) / 2
 
         elif specific == Encodings.THETA_FORMAT_BL_RB:
@@ -524,7 +525,7 @@ class Encoder:
             ref_vector = rb_vertices - bl_vertices
 
             width = torch.norm(ref_vector, dim=-1)
-            height = torch.norm(bl_vertices - tl_vertices, dim=-1)
+            height = torch.norm(lt_vertices - bl_vertices, dim=-1)
             center = lt_vertices + (rb_vertices - lt_vertices) / 2
         else:
             raise ValueError(f"{specific} not supported as theta format")
@@ -542,7 +543,7 @@ class Encoder:
         temp_height = torch.where(angle == np.pi / 2, width, height)
         width = torch.where(angle == np.pi / 2, height, width)
         height = temp_height
-        angle = (angle * 180 / np.pi) * -1
+        angle = angle * 180 / np.pi
 
         return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 

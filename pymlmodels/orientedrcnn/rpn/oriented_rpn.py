@@ -69,8 +69,8 @@ class OrientedRPN(nn.Module):
           
     def __select_top_1000(
              self, 
-             vertices: OrderedDict[str, list[torch.Tensor]], 
-             objectness: OrderedDict[str, list[torch.Tensor]]
+             vertices: OrderedDict[int, list[torch.Tensor]], 
+             objectness: OrderedDict[int, list[torch.Tensor]]
         ) :
         n_batches = len(list(vertices.values())[0])
         result_vertices = OrderedDict({k: [] for k in vertices.keys()})
@@ -143,9 +143,10 @@ class OrientedRPN(nn.Module):
         )
         output = OrderedDict()
         for k in levelwise_proposals.keys():
-            output[k] = RPNOutput(
-                region_proposals=levelwise_proposals[k],
-                objectness_scores=levelwise_objectness[k],
-                loss=levelwise_loss[k] if annotation else None
-            )
+            if k < 4:
+                output[k] = RPNOutput(
+                    region_proposals=levelwise_proposals[k],
+                    objectness_scores=levelwise_objectness[k],
+                    loss=levelwise_loss[k] if annotation else None
+                )
         return output

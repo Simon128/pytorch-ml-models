@@ -9,6 +9,13 @@ class LossOutput:
     classification_loss: float | torch.Tensor
     regression_loss: float | torch.Tensor
 
+    def detach(self):
+        return LossOutput(
+            total_loss=self.total_loss.detach(),
+            classification_loss=self.classification_loss.detach(),
+            regression_loss=self.regression_loss.detach() if isinstance(self.regression_loss, torch.Tensor) else self.regression_loss
+        )
+
     def __add__(self, o: 'LossOutput'):
         return LossOutput(
             total_loss=self.total_loss + o.total_loss,

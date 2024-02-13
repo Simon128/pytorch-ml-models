@@ -29,7 +29,11 @@ class OrientedRCNN(nn.Module):
 
         rpn_out = self.oriented_rpn(numerical_ordered_feat, annotation, x.device, x)
         anchors = self.anchor_generator.generate_like_fpn(numerical_ordered_feat, w, h, x.device)
-        head_out = self.head(rpn_out, numerical_ordered_feat, annotation)
+        numerical_ordered_feat2 = OrderedDict()
+        for idx, v in enumerate(feat.values()):
+            if idx < 4:
+                numerical_ordered_feat2[idx] = v
+        head_out = self.head(rpn_out, numerical_ordered_feat2, annotation)
         return OrientedRCNNOutput(
             rpn_output=rpn_out,
             anchors=anchors,

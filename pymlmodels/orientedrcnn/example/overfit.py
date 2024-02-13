@@ -9,6 +9,7 @@ from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torch.profiler import profile, record_function, ProfilerActivity
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import time
 
 from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
@@ -91,6 +92,51 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
     #cv2.imwrite(f"{index} HEAD.png", image_clone)
     writer.add_image(f'class/head', torch.tensor(image_clone).permute((2, 0, 1))/255, index)
 
+def visualize_targets(image: np.ndarray, boxes: torch.Tensor, index: int, writer: SummaryWriter):
+    image_clone = image.copy()
+
+    top_boxes = encode(boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+    for box in top_boxes:
+        rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
+        pts = cv2.boxPoints(rot) # type: ignore
+        pts = np.intp(pts) 
+        image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 1) # type: ignore
+
+    #cv2.imwrite(f"{index} HEAD.png", image_clone)
+    writer.add_image(f'class/ann', torch.tensor(image_clone).permute((2, 0, 1))/255, index)
+
+def plot_grad_flow(named_parameters):
+    '''Plots the gradients flowing through different layers in the net during training.
+    Can be used for checking for possible gradient vanishing / exploding problems.
+    
+    Usage: Plug this function in Trainer class after loss.backwards() as 
+    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+    ave_grads = []
+    max_grads= []
+    layers = []
+    for n, p in named_parameters:
+        if(p.requires_grad) and ("bias" not in n):
+            layers.append(n)
+            if p.grad is not None:
+                ave_grads.append(p.grad.abs().mean().item())
+                max_grads.append(p.grad.abs().max().item())
+            else:
+                ave_grads.append(0.0)
+                max_grads.append(0.0)
+    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
+    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(left=0, right=len(ave_grads))
+    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+    plt.xlabel("Layers")
+    plt.ylabel("average gradient")
+    plt.title("Gradient flow")
+    plt.grid(True)
+    plt.legend([Line2D([0], [0], color="c", lw=4),
+                Line2D([0], [0], color="b", lw=4),
+                Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
+
 if __name__ == "__main__":
     device = torch.device("cuda")
     image, tensor = load_test_image(device)
@@ -133,7 +179,7 @@ if __name__ == "__main__":
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
         ], lr=0.005, momentum=0.9, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
 
     running_loss_rpn: LossOutput | None = None
     running_loss_head: LossOutput | None = None
@@ -171,6 +217,7 @@ if __name__ == "__main__":
             test =5
         last_total_loss = total_loss.detach().clone()
         total_loss.backward()
+        #plot_grad_flow(model.named_parameters())
         optimizer.step()
         #p.step()
         running_loss_total += total_loss.item()
@@ -180,7 +227,7 @@ if __name__ == "__main__":
 
         out.head_output.loss.to_writer(writer, "head", e)
 
-        scheduler.step()
+        #scheduler.step()
         
         if e % 10 == 0:
             print(f"Epoch: {e} [{running_loss_total / 10.0}]")
@@ -190,5 +237,6 @@ if __name__ == "__main__":
             image = tensor[0].detach().clone().cpu().permute((1, 2, 0)).numpy() * 255
             visualize_rpn_predictions(image, out, e, fpn_strides, writer)
             visualize_head_predictions(image, out, e, writer)
+            visualize_targets(image, annotation.boxes[0], e, writer)
 
     writer.close()

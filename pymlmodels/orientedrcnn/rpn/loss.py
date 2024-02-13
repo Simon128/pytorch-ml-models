@@ -41,7 +41,7 @@ class RPNLoss(nn.Module):
             sampled_obj_pred = objectness_predictions[b][all_pred_idx]
             sampled_obj_pred = torch.where(sampled_obj_pred == 0, 1e-7, sampled_obj_pred)
             target_objectness = torch.cat([torch.ones(n_pos), torch.zeros(n_neg)]).to(iou.device)
-            cls_loss += self.bce(sampled_obj_pred, target_objectness)
+            cls_loss = cls_loss + self.bce(sampled_obj_pred, target_objectness)
 
             if n_pos > 0:
                 sampled_anchor_offsets = anchor_offsets_predictions[b][positives_idx[0]]
@@ -50,7 +50,7 @@ class RPNLoss(nn.Module):
                     Encodings.VERTICES, Encodings.ANCHOR_OFFSET, 
                     anchors[b][positives_idx[0]]
                 )
-                regr_loss += F.smooth_l1_loss(
+                regr_loss = regr_loss + F.smooth_l1_loss(
                     sampled_anchor_offsets, 
                     target_offsets,
                     reduction="mean",

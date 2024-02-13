@@ -101,15 +101,15 @@ class OrientedRCNNHead(nn.Module):
         for k in proposals.keys():
             stride = self.fpn_strides[k]
             for b in range(len(proposals[k].region_proposals)):
-                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
-                rois_obj = torch.cat([
-                    proposals[k].objectness_scores[b], 
-                    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
-                ])
-                #rois = torch.cat([ground_truth.boxes[b] / stride])
+                #rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
                 #rois_obj = torch.cat([
+                #    proposals[k].objectness_scores[b], 
                 #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 #])
+                rois = torch.cat([ground_truth.boxes[b] / stride])
+                rois_obj = torch.cat([
+                    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
+                ])
                 proposals[k].region_proposals[b] = rois
                 proposals[k].objectness_scores[b] = rois_obj
 
@@ -166,7 +166,10 @@ class OrientedRCNNHead(nn.Module):
         for k in proposals.keys():
             region_proposals[k] = [p.detach() for p in proposals[k].region_proposals]
 
+
+
         flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
+
 
         if ground_truth is not None:
             sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
@@ -180,6 +183,7 @@ class OrientedRCNNHead(nn.Module):
                     flat_proposals[b] = flat_proposals[b][sampled_indices[b]] # type:ignore
                     flat_strides[b] = flat_strides[b][sampled_indices[b]] # type:ignore
                     flat_keys[b] = flat_keys[b][sampled_indices[b]] # type:ignore
+
 
         # debug
         #import cv2
@@ -220,26 +224,31 @@ class OrientedRCNNHead(nn.Module):
         boxes = []
         for b in range(len(regression)):
             efp = encode(flat_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            # we resize the proposals here instead of after
+            # the changes, to prevent small width/height changes to have a
+            # large impact (1% * stride of 64 = 64% change)
+            efp[..., :-1] = efp[..., :-1] * flat_strides[b].unsqueeze(-1)
             boxes_x = efp[..., 2] * regression[b][..., 0] + efp[..., 0]
             boxes_y = efp[..., 3] * regression[b][..., 1] + efp[..., 1]
             boxes_w = efp[..., 2] * torch.exp(torch.clamp(regression[b][..., 2], max=clamp_v, min=-clamp_v))
             boxes_h = efp[..., 3] * torch.exp(torch.clamp(regression[b][..., 3], max=clamp_v, min=-clamp_v))
             boxes_a = efp[..., 4] + regression[b][..., 4]
             boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
-            boxes[-1][..., :-1] = boxes[-1][..., :-1] * flat_strides[b].unsqueeze(-1)
         loss = LossOutput(0, 0, 0)
 
         if ground_truth is not None:
             for b in range(len(boxes)):
                 if self.training:
+                    fp = encode(flat_proposals[b][:positives[b]], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+                    fp[..., :-1] = fp[..., :-1] * flat_strides[b][:positives[b]].unsqueeze(-1)
                     positive_boxes = regression[b][:positives[b]]
-                    target_boxes = sampled_ground_truth_boxes[b]
-                    fp = boxes[b][:positives[b]]
+                    target_boxes = sampled_ground_truth_boxes[b] 
                 else:
                     pos_idx = sampled_indices[b][:positives[b]]
                     positive_boxes = regression[b][pos_idx]
-                    target_boxes = sampled_ground_truth_boxes[b]
-                    fp = boxes[b][pos_idx]
+                    target_boxes = sampled_ground_truth_boxes[b] 
+                    fp = encode(flat_proposals[b][pos_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+                    fp[..., :-1] = fp[..., :-1] * flat_strides[b][pos_idx].unsqueeze(-1)
                 rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
                 rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
@@ -247,9 +256,9 @@ class OrientedRCNNHead(nn.Module):
                 rel_target_da = target_boxes[..., 4] - fp[..., 4]
                 rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
                 if self.training: 
-                    loss += self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
+                    loss = loss + self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
                 else:
-                    loss += self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+                    loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
 
                 if torchdist.is_initialized() and torchdist.get_world_size() > 1:
                         # prevent unused parameters (which crashes DDP)
