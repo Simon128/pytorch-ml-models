@@ -146,29 +146,23 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
             rpn_proposals: list[torch.Tensor], 
             keys: list[torch.Tensor]
         ):
-        #num_batches = len(rpn_proposals)
-        #channels = fpn_features[0].shape[1]
-        #device = rpn_proposals[0].device
-        #roi_format = self.process_rpn_proposals(rpn_proposals)
-        #cat_keys = torch.cat(keys)
-        #output = [
-        #    torch.zeros((len(rpn_proposals[b]), channels, *self.output_size), device=device) 
-        #    for b in range(len(rpn_proposals))
-        #]
-        #output_window = [0 for _ in range(len(rpn_proposals))]
+        device = rpn_proposals[0].device
+        channels = fpn_features[0].shape[1]
+        output = []
+        for b in range(len(rpn_proposals)):
+            _output = torch.zeros((len(rpn_proposals[b]),channels,*self.output_size), device=device)
+            roi_format = encode(rpn_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            b_idx_tensor = torch.full((len(rpn_proposals[b]), 1), b, device=roi_format.device)
+            _in = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
 
-        #for k in fpn_features.keys():
-        #    mask = cat_keys == k
-        #    roi_align = super().forward(fpn_features[k], roi_format[mask])
+            for k in fpn_features.keys():
+                mask = keys[b] == k
+                roi_align = super().forward(fpn_features[k], _in[mask])
+                _output[mask] = roi_align.float()
 
-        #    for b in range(num_batches):
-        #        batch_mask = roi_format[mask][:, 0] == b
-        #        batched_roi_align = roi_align[batch_mask]
-        #        window_end = len(batched_roi_align)
-        #        output[b][output_window[b]:output_window[b]+window_end] = batched_roi_align
-        #        output_window[b] += window_end
+            output.append(_output)
 
-        #return output
+        return output
 
         output = []
         for b in range(len(rpn_proposals)):
