@@ -545,6 +545,9 @@ class Encoder:
         height = temp_height
         angle = angle * 180 / np.pi
 
+        if specific == Encodings.THETA_FORMAT_TL_RT:
+            angle = angle * -1
+
         return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 
     def __theta_to_vertices(self, vertices: torch.Tensor, specific_src: Encodings):

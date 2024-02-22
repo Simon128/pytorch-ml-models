@@ -166,8 +166,6 @@ class OrientedRCNNHead(nn.Module):
         for k in proposals.keys():
             region_proposals[k] = [p.detach() for p in proposals[k].region_proposals]
 
-
-
         flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
 
 
