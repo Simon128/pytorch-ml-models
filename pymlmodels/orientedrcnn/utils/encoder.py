@@ -536,6 +536,9 @@ class Encoder:
             torch.clamp((ref_vector[..., 0] * rel_x_axis[..., 0] + ref_vector[..., 1] * rel_x_axis[..., 1]) / 
             torch.clamp(torch.norm(ref_vector, p=2, dim=-1) * torch.norm(rel_x_axis, p=2, dim=-1), min=EPS), min=-1+EPS, max=1-EPS)
         ) 
+        if specific == Encodings.THETA_FORMAT_BL_RB:
+            angle = angle * -1
+
         x_center = center[..., 0]
         y_center = center[..., 1]
 
@@ -544,9 +547,6 @@ class Encoder:
         width = torch.where(angle == np.pi / 2, height, width)
         height = temp_height
         angle = angle * 180 / np.pi
-
-        if specific == Encodings.THETA_FORMAT_TL_RT:
-            angle = angle * -1
 
         return torch.cat((x_center, y_center, width, height, angle), dim=-1)
 
