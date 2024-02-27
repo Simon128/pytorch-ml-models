@@ -171,7 +171,7 @@ if __name__ == "__main__":
             "head": {
                 "num_classes": 3,
                 "out_channels": 1024,
-                "inject_annotation": True
+                "inject_annotation": False
             }
         }
     ).to(device)

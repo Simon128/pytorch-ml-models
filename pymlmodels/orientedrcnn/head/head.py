@@ -277,7 +277,7 @@ class OrientedRCNNHead(nn.Module):
                 thr_cls = softmax_class[thr_mask]
                 thr_boxes = boxes[b][thr_mask]
                 if len(thr_boxes) == 0:
-                    keep.append(torch.empty(0, dtype=torch.int64).to(boxes[b].device))
+                    keep.append(torch.empty(0, dtype=torch.int64, device=boxes[b].device))
                     continue
                 keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
                 keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
