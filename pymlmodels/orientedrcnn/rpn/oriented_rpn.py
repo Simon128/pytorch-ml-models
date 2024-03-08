@@ -143,10 +143,9 @@ class OrientedRPN(nn.Module):
         )
         output = OrderedDict()
         for k in levelwise_proposals.keys():
-            if k < 4:
-                output[k] = RPNOutput(
-                    region_proposals=levelwise_proposals[k],
-                    objectness_scores=levelwise_objectness[k],
-                    loss=levelwise_loss[k] if annotation else None
-                )
+            output[k] = RPNOutput(
+                region_proposals=levelwise_proposals[k],
+                objectness_scores=levelwise_objectness[k],
+                loss=levelwise_loss[k] if annotation else None
+            )
         return output
