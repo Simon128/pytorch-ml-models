@@ -265,14 +265,20 @@ class OrientedRCNNHead(nn.Module):
                 
             loss = loss / len(boxes)
 
+        # remove prediction where background class is argmax
+        # and encode boxes as vertices
+        for b in range(len(classification)):
+            mask = (torch.argmax(classification[b], dim=-1) == self.num_classes) == False
+            classification[b] = classification[b][mask]
+            boxes[b] = boxes[b][mask]
+
         softmax_class = []
         post_class_nms_classification = []
-        post_class_nms_rois = []
         post_class_nms_boxes = []
         for b in range(len(classification)):
             keep = []
             softmax_class = torch.softmax(classification[b], dim=-1)
-            for c in range(self.num_classes):
+            for c in range(self.num_classes - 1): # -1 for background class
                 thr_mask = softmax_class[..., c] > 0.05
                 thr_cls = softmax_class[thr_mask]
                 thr_boxes = boxes[b][thr_mask]
@@ -284,7 +290,6 @@ class OrientedRCNNHead(nn.Module):
 
             keep = torch.cat(keep, dim=0)
             post_class_nms_classification.append(softmax_class[keep])
-            post_class_nms_rois.append(flat_proposals[b][keep])
             post_class_nms_boxes.append(boxes[b][keep])
 
         classification = post_class_nms_classification

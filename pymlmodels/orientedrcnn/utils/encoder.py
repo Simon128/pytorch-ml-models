@@ -552,19 +552,42 @@ class Encoder:
 
     def __theta_to_vertices(self, vertices: torch.Tensor, specific_src: Encodings):
         # center x, center y, width, height, angle
-        device = vertices.device
         x = vertices[..., 0]
         y = vertices[..., 1]
         width = vertices[..., 2]
         height = vertices[..., 3]
-        angle = vertices[..., 4]
-        rel_x_axis = torch.stack((x, torch.zeros_like(y)), dim=-1).to(device)
+        rad_angle = vertices[..., 4] * np.pi / 180
         if specific_src == Encodings.THETA_FORMAT_TL_RT:
             # center is x,y
             # reference vector is 1,y
             raise NotImplementedError("do we need this?")
         elif specific_src == Encodings.THETA_FORMAT_BL_RB:
-            raise NotImplementedError("do we need this?")
+            rb_ctr_x = width / 2 * torch.cos(rad_angle) + x
+            rb_ctr_y = width / 2 * torch.sin(rad_angle) + y
+            ctr_to_rb_ctr_x = rb_ctr_x - x
+            ctr_to_rb_ctr_y = rb_ctr_y - y
+            perp_up_x = -(ctr_to_rb_ctr_y)
+            perp_up_y = ctr_to_rb_ctr_x
+            perp_up_length = torch.sqrt(torch.square(perp_up_x) + torch.square(perp_up_y))
+            perp_up_x_unit = perp_up_x / perp_up_length
+            perp_up_y_unit = perp_up_y / perp_up_length
+            right_top_x = rb_ctr_x + perp_up_x_unit * height / 2
+            right_top_y = rb_ctr_y + perp_up_y_unit * height / 2
+            top_left_x = rb_ctr_x - perp_up_x_unit * height / 2
+            top_left_y = rb_ctr_y - perp_up_y_unit * height / 2
+            left_bot_x = top_left_x - 2 * ctr_to_rb_ctr_x
+            left_bot_y = top_left_y - 2 * ctr_to_rb_ctr_y
+            bot_right_x = right_top_x - 2 * ctr_to_rb_ctr_x
+            bot_right_y = right_top_y - 2 * ctr_to_rb_ctr_y
+            return torch.cat(
+                (
+                    torch.stack((top_left_x, top_left_y), dim=-1).unsqueeze(-2),
+                    torch.stack((right_top_x, right_top_y), dim=-1).unsqueeze(-2),
+                    torch.stack((bot_right_x, bot_right_y), dim=-1).unsqueeze(-2),
+                    torch.stack((left_bot_x, left_bot_y), dim=-1).unsqueeze(-2)
+                ),
+                dim=-2
+            )
         else:
             raise NotImplementedError("do we need this?")
 
