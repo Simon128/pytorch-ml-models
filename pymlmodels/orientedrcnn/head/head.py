@@ -278,7 +278,7 @@ class OrientedRCNNHead(nn.Module):
         for b in range(len(classification)):
             keep = []
             softmax_class = torch.softmax(classification[b], dim=-1)
-            for c in range(self.num_classes - 1): # -1 for background class
+            for c in range(self.num_classes): 
                 thr_mask = softmax_class[..., c] > 0.05
                 thr_cls = softmax_class[thr_mask]
                 thr_boxes = boxes[b][thr_mask]
