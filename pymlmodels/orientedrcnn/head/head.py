@@ -289,7 +289,8 @@ class OrientedRCNNHead(nn.Module):
                 keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
 
             keep = torch.cat(keep, dim=0).unique()
-            post_class_nms_classification.append(softmax_class[keep])
+            # remove background class
+            post_class_nms_classification.append(softmax_class[keep][..., :self.num_classes])
             post_class_nms_boxes.append(boxes[b][keep])
 
         classification = post_class_nms_classification
