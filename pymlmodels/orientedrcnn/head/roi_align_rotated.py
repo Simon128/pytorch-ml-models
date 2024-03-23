@@ -105,8 +105,6 @@ class ROIAlignRotated(nn.Module):
         tmpstr += ")"
         return tmpstr
 
-from mmcv.ops import RoIAlignRotated as mmcvRoi
-
 class RoIAlignRotatedWrapper(ROIAlignRotated):
     def __init__(
             self, 
