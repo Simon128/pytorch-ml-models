@@ -96,22 +96,22 @@ class OrientedRCNNHead(nn.Module):
 
         return sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls
 
-    def _inject_annotations(self, proposals: OrderedDict[str, RPNOutput], ground_truth: Annotation):
+    def _inject_annotations(self, proposals: RPNOutput, ground_truth: Annotation):
         device = ground_truth.boxes[0].device
-        for k in proposals.keys():
+        for k in proposals.region_proposals.keys():
             stride = self.fpn_strides[k]
-            for b in range(len(proposals[k].region_proposals)):
-                rois = torch.cat([proposals[k].region_proposals[b], ground_truth.boxes[b] / stride])
+            for b in range(len(proposals.region_proposals[k])):
+                rois = torch.cat([proposals.region_proposals[k][b], ground_truth.boxes[b] / stride])
                 rois_obj = torch.cat([
-                    proposals[k].objectness_scores[b], 
+                    proposals.objectness_scores[k][b], 
                     torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 ])
                 #rois = torch.cat([ground_truth.boxes[b] / stride])
                 #rois_obj = torch.cat([
                 #    torch.ones((len(ground_truth.boxes[b],))).float().to(device)
                 #])
-                proposals[k].region_proposals[b] = rois
-                proposals[k].objectness_scores[b] = rois_obj
+                proposals.region_proposals[k][b] = rois
+                proposals.objectness_scores[k][b] = rois_obj
 
     def flatten_dict(
             self,
@@ -152,19 +152,19 @@ class OrientedRCNNHead(nn.Module):
 
     def forward(
             self, 
-            proposals: OrderedDict[str, RPNOutput], 
+            proposals: RPNOutput, 
             fpn_feat: OrderedDict, 
             ground_truth: Annotation | None = None
         ):
-        if self.training and self.inject_annotation:
+        if True or (self.training and self.inject_annotation):
             self._inject_annotations(proposals, ground_truth) # type:ignore
 
         # detaching proposals is key to prevent gradient 
         # propagation from head to RPN, resulting in 
         # RPN and head "combating" each other
         region_proposals = OrderedDict()
-        for k in proposals.keys():
-            region_proposals[k] = [p.detach() for p in proposals[k].region_proposals]
+        for k in proposals.region_proposals.keys():
+            region_proposals[k] = [p.detach() for p in proposals.region_proposals[k]]
 
         flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
 
@@ -231,6 +231,7 @@ class OrientedRCNNHead(nn.Module):
             boxes_w = efp[..., 2] * torch.exp(torch.clamp(regression[b][..., 2], max=clamp_v, min=-clamp_v))
             boxes_h = efp[..., 3] * torch.exp(torch.clamp(regression[b][..., 3], max=clamp_v, min=-clamp_v))
             boxes_a = efp[..., 4] + regression[b][..., 4]
+            boxes_a = norm_angle(boxes_a)
             boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
         loss = LossOutput(0, 0, 0)
 
@@ -252,6 +253,7 @@ class OrientedRCNNHead(nn.Module):
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
                 rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
                 rel_target_da = target_boxes[..., 4] - fp[..., 4]
+                rel_target_da = norm_angle(rel_target_da)
                 rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
                 if self.training: 
                     loss = loss + self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
@@ -298,7 +300,17 @@ class OrientedRCNNHead(nn.Module):
             
         return HeadOutput(
             classification=classification,
-            boxes=boxes,
+            boxes=[encode(b, Encodings.THETA_FORMAT_BL_RB, Encodings.VERTICES) for b in boxes],
             loss=loss
         )
 
+def norm_angle(angle):
+    """Limit the range of angles.
+
+    Args:
+        angle (ndarray): shape(n, ).
+
+    Returns:
+        angle (ndarray): shape(n, ).
+    """
+    return (angle + np.pi / 2) % np.pi - np.pi / 2

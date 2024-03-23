@@ -49,8 +49,8 @@ class Annotation:
 
 @dataclass
 class RPNOutput:
-    region_proposals: list[torch.Tensor]
-    objectness_scores: list[torch.Tensor]
+    region_proposals: OrderedDict[int,list[torch.Tensor]]
+    objectness_scores: OrderedDict[int,list[torch.Tensor]]
     loss: LossOutput | None = None
 
 @dataclass
@@ -61,7 +61,6 @@ class HeadOutput:
 
 @dataclass
 class OrientedRCNNOutput:
-    rpn_output: OrderedDict[str, RPNOutput]
-    anchors: OrderedDict[str, torch.Tensor]
+    rpn_output: RPNOutput
     backbone_output: OrderedDict[str, torch.Tensor]
     head_output: HeadOutput

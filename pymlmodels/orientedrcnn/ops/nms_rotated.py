@@ -2,6 +2,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import torch
+import numpy as np
 import pymlmodels.orientedrcnn._C as _C
 
 # Note: this function (nms_rotated) might be moved into
@@ -59,7 +60,7 @@ def nms_rotated(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float)
 
     Args:
         boxes (Tensor[N, 5]): Rotated boxes to perform NMS on. They are expected to be in
-           (x_center, y_center, width, height, angle_degrees) format.
+           (x_center, y_center, width, height, angle_rad) format.
         scores (Tensor[N]): Scores for each one of the rotated boxes
         iou_threshold (float): Discards all overlapping rotated boxes with IoU < iou_threshold
 
@@ -67,4 +68,5 @@ def nms_rotated(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float)
         keep (Tensor): int64 tensor with the indices of the elements that have been kept
         by Rotated NMS, sorted in decreasing order of scores
     """
+    boxes[..., -1] = boxes[..., -1] * 180 / np.pi
     return _C.nms_rotated(boxes, scores, iou_threshold)

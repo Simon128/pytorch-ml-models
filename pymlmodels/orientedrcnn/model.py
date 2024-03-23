@@ -1,10 +1,11 @@
 import torch.nn as nn
 import torch
-from typing import OrderedDict
+from typing import OrderedDict, Any
+
 
 from .rpn import OrientedRPN, FPNAnchorGenerator
 from .head import OrientedRCNNHead
-from .utils import OrientedRCNNOutput, Annotation
+from .utils import OrientedRCNNOutput, Annotation, RPNOutput
 
 class OrientedRCNN(nn.Module):
     '''
@@ -15,27 +16,38 @@ class OrientedRCNN(nn.Module):
         self.backbone = backbone
         self.oriented_rpn = OrientedRPN(image_width, image_height, **cfg.get("rpn", {}))
         self.head = OrientedRCNNHead(**cfg.get("head", {}))
+        self.anchors = None
         self.anchor_generator = FPNAnchorGenerator(
             sqrt_size_per_level=(32, 64, 128, 256, 512)
         )
 
+    def __filter_dict_by_max_key(self, d: OrderedDict[int, Any], max_key: int):
+        result = OrderedDict()
+
+        for key, val in d.items():
+            if key <= max_key:
+                result[key] = val
+
+        return result
+
     def forward(self, x: torch.Tensor, annotation: Annotation | None = None):
-        _, _, h, w = x.shape
         feat = self.backbone(x)
 
         numerical_ordered_feat = OrderedDict()
         for idx, v in enumerate(feat.values()):
             numerical_ordered_feat[idx] = v
 
-        rpn_out = self.oriented_rpn(numerical_ordered_feat, annotation, x.device, x)
-        anchors = self.anchor_generator.generate_like_fpn(numerical_ordered_feat, w, h, x.device)
-        for idx, v in enumerate(feat.values()):
-            if idx < 4:
-                numerical_ordered_feat[idx] = v
-        head_out = self.head(rpn_out, numerical_ordered_feat, annotation)
+        rpn_out = self.oriented_rpn(numerical_ordered_feat, annotation, x.device)
+
+        rpn_for_head = RPNOutput(
+            region_proposals=self.__filter_dict_by_max_key(rpn_out.region_proposals, 3),
+            objectness_scores=self.__filter_dict_by_max_key(rpn_out.objectness_scores, 3)
+        )
+        feat_for_head = self.__filter_dict_by_max_key(numerical_ordered_feat, 3)
+
+        head_out = self.head(rpn_for_head, feat_for_head, annotation)
         return OrientedRCNNOutput(
             rpn_output=rpn_out,
-            anchors=anchors,
             backbone_output=numerical_ordered_feat,
             head_output=head_out
         )

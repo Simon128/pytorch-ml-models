@@ -105,6 +105,8 @@ class ROIAlignRotated(nn.Module):
         tmpstr += ")"
         return tmpstr
 
+from mmcv.ops import RoIAlignRotated as mmcvRoi
+
 class RoIAlignRotatedWrapper(ROIAlignRotated):
     def __init__(
             self, 
@@ -135,6 +137,8 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         result = [None] * len(rpn_proposals)
         for b_idx in range(len(rpn_proposals)):
             roi_format = encode(rpn_proposals[b_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            # rad to degree
+            roi_format[..., -1] = roi_format[..., -1] * 180 / np.pi
             n = roi_format.shape[0]
             b_idx_tensor = torch.full((n, 1), b_idx, device=roi_format.device)
             result[b_idx] = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
@@ -148,19 +152,35 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         ):
         device = rpn_proposals[0].device
         channels = fpn_features[0].shape[1]
+        num_batches = fpn_features[0].shape[0]
+        cat_proposals = self.process_rpn_proposals(rpn_proposals)
+        cat_keys = torch.cat(keys, dim=0)
+        unbatched_output = torch.zeros((len(cat_keys), channels, *self.output_size), device=device)
+
+        for k in fpn_features.keys():
+            mask = cat_keys == k
+            roi_align = super().forward(fpn_features[k], cat_proposals[mask])
+            unbatched_output[mask] = roi_align.float()
+
         output = []
-        for b in range(len(rpn_proposals)):
-            _output = torch.zeros((len(rpn_proposals[b]),channels,*self.output_size), device=device)
-            roi_format = encode(rpn_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-            b_idx_tensor = torch.full((len(rpn_proposals[b]), 1), 0, device=roi_format.device)
-            _in = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
+        for b in range(num_batches):
+            mask = cat_proposals[..., 0] == b
+            output.append(unbatched_output[mask])
 
-            for k in fpn_features.keys():
-                mask = keys[b] == k
-                roi_align = super().forward(fpn_features[k][b].unsqueeze(0), _in[mask])
-                _output[mask] = roi_align.float()
+        return output
 
-            output.append(_output)
+        #for b in range(len(rpn_proposals)):
+        #    _output = torch.zeros((len(rpn_proposals[b]),channels,*self.output_size), device=device)
+        #    roi_format = encode(rpn_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+        #    b_idx_tensor = torch.full((len(rpn_proposals[b]), 1), 0, device=roi_format.device)
+        #    _in = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore
+
+        #    for k in fpn_features.keys():
+        #        mask = keys[b] == k
+        #        roi_align = super().forward(fpn_features[k][b].unsqueeze(0), _in[mask])
+        #        _output[mask] = roi_align.float()
+
+        #    output.append(_output)
 
         return output
 

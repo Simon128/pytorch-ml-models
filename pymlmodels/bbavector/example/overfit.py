@@ -1,19 +1,16 @@
 import cv2
 import numpy as np
 import torch
-from torch import autograd
 import os
 import json
-import math
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from torch.profiler import profile, record_function, ProfilerActivity
+from torch.profiler import profile,  ProfilerActivity
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-import time
 
-from ..utils import Annotation, OrientedRCNNOutput, LossOutput, encode, Encodings
-from ..model import OrientedRCNN
+from ..utils import BBAVectorOutput
+from ..bbavector import BBAVector
 
 def load_test_image(device: torch.device):
     dir = os.path.dirname(os.path.abspath(__file__))
@@ -154,34 +151,25 @@ if __name__ == "__main__":
     #cv2.imwrite("obb_vs_hbb.png", curr_image)
 
     h, w, _ = image.shape
-    fpn_strides = [4, 8, 16, 32, 64]
-
-    backbone = resnet_fpn_backbone(
-        backbone_name='resnet18', 
-        weights="DEFAULT", 
-        trainable_layers=4
-    ).to(device)
-    backbone.train()
-    model = OrientedRCNN(
-        backbone, 
-        tensor.shape[3],
-        tensor.shape[2],
-        {
-            "head": {
-                "num_classes": 3,
-                "out_channels": 1024,
-                "inject_annotation": False
-            }
-        }
+    model = BBAVector(
+        heads = {
+            'hm': 15,
+            'wh': 10,
+            'reg': 2,
+            'cls_theta': 1
+        },
+        pretrained=True,
+        down_ratio=4,
+        final_kernel=1,
+        head_conv=256
     ).to(device)
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
         ], lr=0.005, momentum=0.9, weight_decay=1e-4)
-    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
 
-    running_loss_rpn: LossOutput | None = None
-    running_loss_head: LossOutput | None = None
+    running_loss_rpn: None = None
+    running_loss_head: None = None
     running_loss_total: float = 0.0
     epochs = 10000
 
@@ -201,7 +189,7 @@ if __name__ == "__main__":
         last_total_loss = 0
         for e in range(epochs):
             optimizer.zero_grad()
-            out: OrientedRCNNOutput = model.forward(tensor.to(device), annotation)
+            out: BBAVectorOutput = model.forward()
             # val test:
             #model.eval()
             #with torch.inference_mode():
