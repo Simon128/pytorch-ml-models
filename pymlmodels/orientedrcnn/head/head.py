@@ -231,7 +231,6 @@ class OrientedRCNNHead(nn.Module):
             boxes_w = efp[..., 2] * torch.exp(torch.clamp(regression[b][..., 2], max=clamp_v, min=-clamp_v))
             boxes_h = efp[..., 3] * torch.exp(torch.clamp(regression[b][..., 3], max=clamp_v, min=-clamp_v))
             boxes_a = efp[..., 4] + regression[b][..., 4]
-            boxes_a = norm_angle(boxes_a)
             boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
         loss = LossOutput(0, 0, 0)
 
@@ -253,7 +252,6 @@ class OrientedRCNNHead(nn.Module):
                 rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
                 rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
                 rel_target_da = target_boxes[..., 4] - fp[..., 4]
-                rel_target_da = norm_angle(rel_target_da)
                 rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
                 if self.training: 
                     loss = loss + self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
