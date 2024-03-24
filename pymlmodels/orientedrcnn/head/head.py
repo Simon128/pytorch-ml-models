@@ -94,7 +94,12 @@ class OrientedRCNNHead(nn.Module):
             gt_cls[:n_pos] = ground_truth_cls[b][pos_indices[1]]
             sampled_ground_truth_cls.append(gt_cls)
 
-        return sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls
+        return {
+            "indices": sampled_indices, 
+            "num_pos": positives, 
+            "gt_boxes": sampled_ground_truth_boxes, 
+            "gt_cls": sampled_ground_truth_cls
+        }
 
     def _inject_annotations(self, proposals: RPNOutput, ground_truth: Annotation):
         device = ground_truth.boxes[0].device
@@ -150,6 +155,95 @@ class OrientedRCNNHead(nn.Module):
         else:
             return flat, flat_keys
 
+    def _compute_predictions(self, regression, flat_proposals, flat_strides):
+        # see https://arxiv.org/pdf/1311.2524.pdf
+        clamp_v = np.abs(np.log(16/1000))
+        boxes = []
+        encoded_proposals = []
+        for b in range(len(regression)):
+            efp = encode(flat_proposals[b] * flat_strides[b][:, None, None], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+            boxes_x = efp[..., 2] * regression[b][..., 0] + efp[..., 0]
+            boxes_y = efp[..., 3] * regression[b][..., 1] + efp[..., 1]
+            boxes_w = efp[..., 2] * torch.exp(torch.clamp(regression[b][..., 2], max=clamp_v, min=-clamp_v))
+            boxes_h = efp[..., 3] * torch.exp(torch.clamp(regression[b][..., 3], max=clamp_v, min=-clamp_v))
+            boxes_a = efp[..., 4] + regression[b][..., 4]
+            boxes_a = norm_angle(boxes_a)
+            boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
+            encoded_proposals.append(efp)
+
+        return boxes, encoded_proposals
+
+    def _compute_loss(self, regression, classification, theta_propsals, sample_results):
+        loss = LossOutput(0, 0, 0)
+        positives = sample_results["num_pos"]
+        sampled_indices = sample_results["indices"]
+        sampled_ground_truth_boxes = sample_results["gt_boxes"]
+        sampled_ground_truth_cls = sample_results["gt_cls"]
+
+        for b in range(len(regression)):
+            if self.training:
+                positive_boxes = regression[b][:positives[b]]
+                target_boxes = sampled_ground_truth_boxes[b] 
+                fp = theta_propsals[b][:positives[b]]
+            else:
+                pos_idx = sampled_indices[b][:positives[b]]
+                positive_boxes = regression[b][pos_idx]
+                target_boxes = sampled_ground_truth_boxes[b] 
+                fp = theta_propsals[b][pos_idx]
+            rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
+            rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
+            rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
+            rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
+            rel_target_da = target_boxes[..., 4] - fp[..., 4]
+            rel_target_da = norm_angle(rel_target_da)
+            rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
+            if self.training: 
+                loss = loss + self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
+            else:
+                loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+
+            if torchdist.is_initialized() and torchdist.get_world_size() > 1:
+                # prevent unused parameters (which crashes DDP)
+                # is there a better way?
+                loss.total_loss = loss.total_loss + torch.sum(regression[b].flatten()) * 0
+            
+        return loss / len(regression)
+
+    def _remove_background_predictions(self, predictions, classification):
+        # remove prediction where background class is argmax
+        # and encode boxes as vertices
+        for b in range(len(classification)):
+            mask = (torch.argmax(classification[b], dim=-1) == self.num_classes) == False
+            classification[b] = classification[b][mask]
+            predictions[b] = predictions[b][mask]
+
+        return predictions, classification
+
+    def _post_forward_nms(self, predictions, classification):
+        softmax_class = []
+        post_class_nms_classification = []
+        post_class_nms_boxes = []
+        device = predictions[0].device
+        for b in range(len(classification)):
+            keep = []
+            softmax_class = torch.softmax(classification[b], dim=-1)
+            for c in range(self.num_classes): 
+                thr_mask = softmax_class[..., c] > 0.05
+                thr_cls = softmax_class[thr_mask]
+                thr_boxes = predictions[b][thr_mask]
+                if len(thr_boxes) == 0:
+                    keep.append(torch.empty(0, dtype=torch.int64, device=device))
+                    continue
+                keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
+                keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
+
+            keep = torch.cat(keep, dim=0).unique()
+            # remove background class
+            post_class_nms_classification.append(softmax_class[keep][..., :self.num_classes])
+            post_class_nms_boxes.append(predictions[b][keep])
+
+        return post_class_nms_boxes, post_class_nms_classification
+
     def forward(
             self, 
             proposals: RPNOutput, 
@@ -160,150 +254,43 @@ class OrientedRCNNHead(nn.Module):
             self._inject_annotations(proposals, ground_truth) # type:ignore
 
         # detaching proposals is key to prevent gradient 
-        # propagation from head to RPN, resulting in 
-        # RPN and head "combating" each other
+        # propagation from head to RPN specific layers, resulting in 
+        # RPN and head "combating" each other 
         region_proposals = OrderedDict()
         for k in proposals.region_proposals.keys():
             region_proposals[k] = [p.detach() for p in proposals.region_proposals[k]]
 
         flat_proposals, flat_strides, flat_keys = self.flatten_dict(region_proposals, strides=self.fpn_strides) # type:ignore
 
-
         if ground_truth is not None:
-            sampled_indices, positives, sampled_ground_truth_boxes, sampled_ground_truth_cls = self.sample(
-                flat_proposals, # type:ignore
-                flat_strides, # type:ignore
-                ground_truth.boxes,
-                ground_truth.classifications
-            )
+            sample_results = self.sample(flat_proposals, flat_strides, ground_truth.boxes, ground_truth.classifications)
             if self.training:
+                sampled_indices = sample_results["indices"]
                 for b in range(len(flat_proposals)):
                     flat_proposals[b] = flat_proposals[b][sampled_indices[b]] # type:ignore
                     flat_strides[b] = flat_strides[b][sampled_indices[b]] # type:ignore
                     flat_keys[b] = flat_keys[b][sampled_indices[b]] # type:ignore
-
-
-        # debug
-        #import cv2
-        #import numpy as np
-        #image = cv2.imread("/home/simon/unibw/pytorch-ml-models/pymlmodels/orientedrcnn/example/image.tif")
-        #t_img = torch.from_numpy(image).permute((2, 0, 1)).unsqueeze(0).to("cuda") 
-        ##for p, k in zip(flat_proposals[0], flat_keys[0]):
-        ##    pts = p.detach().clone().cpu().numpy().copy() * self.fpn_strides[k]
-        ##    image = cv2.polylines(image, np.array([pts], dtype=np.int32), True, (255,0,0), 2)
-
-
-        #test_input = {k: t_img.float() / 255 for k in fpn_feat.keys()}
-        #test_roi = self.roi_align_rotated(
-        #    test_input, 
-        #    torch.stack([fp * self.fpn_strides[k] for fp, k in zip(flat_proposals[0], flat_keys[0])]).unsqueeze(0).float(),
-        #    [torch.zeros_like(flat_keys[0])]
-        #)
-
-        #for idx in range(len(test_roi[0])):
-        #    pts = flat_proposals[0][idx].detach().clone().cpu().numpy().copy() * self.fpn_strides[flat_keys[0][idx]]
-        #    image_temp = cv2.polylines(image.copy(), np.array([pts], dtype=np.int32), True, (255,0,0), 2)
-        #    roi_img = test_roi[0][idx].detach().clone().cpu().permute((1, 2, 0)).numpy()
-        #    cv2.imshow("image", image_temp)
-        #    cv2.imshow("roi", roi_img)
-        #    while (1):
-        #        if cv2.waitKey(20) & 0xFF == 27:
-        #            break
-        #    cv2.destroyAllWindows()
-
 
         aligned_feat = self.roi_align_rotated(fpn_feat, flat_proposals, flat_keys)
         post_fc = [self.fc(ff) for ff in aligned_feat]
         classification = [self.classification(pf) for pf in post_fc]
         regression = [self.regression(pf) for pf in post_fc]
 
-        # see https://arxiv.org/pdf/1311.2524.pdf
-        clamp_v = np.abs(np.log(16/1000))
-        boxes = []
-        for b in range(len(regression)):
-            efp = encode(flat_proposals[b], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-            # we resize the proposals here instead of after
-            # the changes, to prevent small width/height changes to have a
-            # large impact (1% * stride of 64 = 64% change)
-            efp[..., :-1] = efp[..., :-1] * flat_strides[b].unsqueeze(-1)
-            boxes_x = efp[..., 2] * regression[b][..., 0] + efp[..., 0]
-            boxes_y = efp[..., 3] * regression[b][..., 1] + efp[..., 1]
-            boxes_w = efp[..., 2] * torch.exp(torch.clamp(regression[b][..., 2], max=clamp_v, min=-clamp_v))
-            boxes_h = efp[..., 3] * torch.exp(torch.clamp(regression[b][..., 3], max=clamp_v, min=-clamp_v))
-            boxes_a = efp[..., 4] + regression[b][..., 4]
-            boxes_a = norm_angle(boxes_a)
-            boxes.append(torch.stack((boxes_x, boxes_y, boxes_w, boxes_h, boxes_a), dim=-1))
-        loss = LossOutput(0, 0, 0)
+        predictions, theta_proposals = self._compute_predictions(regression, flat_proposals, flat_strides)
 
         if ground_truth is not None:
-            for b in range(len(boxes)):
-                if self.training:
-                    fp = encode(flat_proposals[b][:positives[b]], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-                    fp[..., :-1] = fp[..., :-1] * flat_strides[b][:positives[b]].unsqueeze(-1)
-                    positive_boxes = regression[b][:positives[b]]
-                    target_boxes = sampled_ground_truth_boxes[b] 
-                else:
-                    pos_idx = sampled_indices[b][:positives[b]]
-                    positive_boxes = regression[b][pos_idx]
-                    target_boxes = sampled_ground_truth_boxes[b] 
-                    fp = encode(flat_proposals[b][pos_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
-                    fp[..., :-1] = fp[..., :-1] * flat_strides[b][pos_idx].unsqueeze(-1)
-                rel_target_dx = (target_boxes[..., 0] - fp[..., 0]) / fp[..., 2]
-                rel_target_dy = (target_boxes[..., 1] - fp[..., 1]) / fp[..., 3]
-                rel_target_dw = torch.log((target_boxes[..., 2] / fp[..., 2]))
-                rel_target_dh = torch.log((target_boxes[..., 3] / fp[..., 3]))
-                rel_target_da = target_boxes[..., 4] - fp[..., 4]
-                rel_target_da = norm_angle(rel_target_da)
-                rel_targets = torch.stack((rel_target_dx, rel_target_dy, rel_target_dw, rel_target_dh, rel_target_da), dim=-1)
-                if self.training: 
-                    loss = loss + self.loss(positive_boxes, classification[b], rel_targets, sampled_ground_truth_cls[b])
-                else:
-                    loss = loss + self.loss(positive_boxes, classification[b][sampled_indices[b]], rel_targets, sampled_ground_truth_cls[b])
+            loss = self._compute_loss(regression, classification, theta_proposals, sample_results)
+        else:
+            loss = LossOutput(0, 0, 0)
 
-                if torchdist.is_initialized() and torchdist.get_world_size() > 1:
-                        # prevent unused parameters (which crashes DDP)
-                        # is there a better way?
-                        loss.total_loss = loss.total_loss + torch.sum(regression[b].flatten()) * 0
-                
-            loss = loss / len(boxes)
-
-        # remove prediction where background class is argmax
-        # and encode boxes as vertices
-        for b in range(len(classification)):
-            mask = (torch.argmax(classification[b], dim=-1) == self.num_classes) == False
-            classification[b] = classification[b][mask]
-            boxes[b] = boxes[b][mask]
-
-        softmax_class = []
-        post_class_nms_classification = []
-        post_class_nms_boxes = []
-        for b in range(len(classification)):
-            keep = []
-            softmax_class = torch.softmax(classification[b], dim=-1)
-            for c in range(self.num_classes): 
-                thr_mask = softmax_class[..., c] > 0.05
-                thr_cls = softmax_class[thr_mask]
-                thr_boxes = boxes[b][thr_mask]
-                if len(thr_boxes) == 0:
-                    keep.append(torch.empty(0, dtype=torch.int64, device=boxes[b].device))
-                    continue
-                keep_nms = nms_rotated(thr_boxes, thr_cls[..., c], 0.1) # type: ignore
-                keep.append(thr_mask.nonzero().squeeze(-1)[keep_nms])
-
-            keep = torch.cat(keep, dim=0).unique()
-            # remove background class
-            post_class_nms_classification.append(softmax_class[keep][..., :self.num_classes])
-            post_class_nms_boxes.append(boxes[b][keep])
-
-        classification = post_class_nms_classification
-        boxes = post_class_nms_boxes
+        predictions, classification = self._remove_background_predictions(predictions, classification)
+        boxes, classification = self._post_forward_nms(predictions, classification)
             
         return HeadOutput(
             classification=classification,
             boxes=[encode(b, Encodings.THETA_FORMAT_BL_RB, Encodings.VERTICES) for b in boxes],
             loss=loss
         )
-
 def norm_angle(angle):
     """Limit the range of angles.
 

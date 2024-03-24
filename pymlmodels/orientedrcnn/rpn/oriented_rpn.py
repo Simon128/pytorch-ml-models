@@ -172,7 +172,7 @@ class OrientedRPN(nn.Module):
             regression_loss=regression_loss
         )
 
-    def __cache(self, feat: OrderedDict[int, torch.Tensor], device: torch.device):
+    def gen_anchors(self, feat: OrderedDict[int, torch.Tensor], device: torch.device):
         self.anchors = self.anchor_generator.generate_like_fpn(feat, self.image_width, self.image_height, device)
         self.hbb_anchors = OrderedDict()
         for k in range(len(self.fpn_strides)):
@@ -180,13 +180,13 @@ class OrientedRPN(nn.Module):
 
 
     def forward(self, x: OrderedDict, annotation: Annotation | None = None, device: torch.device = torch.device("cpu")):
-        self.__cache(x, device)
+        self.gen_anchors(x, device)
         levelwise_proposals = OrderedDict()
         levelwise_objectness = OrderedDict()
         levelwise_regression = OrderedDict()
         levelwise_nms_objectness = OrderedDict()
 
-        for s_idx, (k, v) in enumerate(x.items()):
+        for k, v in x.items():
             z = self.conv(v)
             z = F.relu(z)
             regression = self.regression_branch(z)

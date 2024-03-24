@@ -273,15 +273,15 @@ class Encoder:
         delta_alpha = anchor_offset[..., 4] * w
         delta_beta = anchor_offset[..., 5] * h
         deltas = torch.stack((x, y, w, h, delta_alpha, delta_beta), dim=-1).float()
-        #means = deltas.new_tensor([0.0] * 6).unsqueeze(0)
-        #stds = deltas.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5]).unsqueeze(0)
-        #deltas = deltas.sub_(means).div_(stds)
+        means = deltas.new_tensor([0.0] * 6).unsqueeze(0)
+        stds = deltas.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5]).unsqueeze(0)
+        deltas = deltas.sub_(means).div_(stds)
         return deltas
 
     def __midpoint_offset_to_anchor_offset(self, midpoint_offset: torch.Tensor, anchors: torch.Tensor):
-        #means = midpoint_offset.new_tensor([0.0] * 6)
-        #stds = midpoint_offset.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5])
-        #midpoint_offset = midpoint_offset * stds + means
+        means = midpoint_offset.new_tensor([0.0] * 6)
+        stds = midpoint_offset.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5])
+        midpoint_offset = midpoint_offset * stds + means
         d_a = midpoint_offset[..., 4] / midpoint_offset[..., 2]
         d_b = midpoint_offset[..., 5] / midpoint_offset[..., 3]
         d_w = torch.log(midpoint_offset[..., 2] / anchors[..., 2])
@@ -291,9 +291,9 @@ class Encoder:
         return torch.stack((d_x, d_y, d_w, d_h, d_a, d_b), dim=-1).float()
 
     def __midpoint_offset_to_vertices(self, midpoint_offset: torch.Tensor):
-        #means = midpoint_offset.new_tensor([0.0] * 6)
-        #stds = midpoint_offset.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5])
-        #midpoint_offset = midpoint_offset * stds + means
+        means = midpoint_offset.new_tensor([0.0] * 6)
+        stds = midpoint_offset.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5])
+        midpoint_offset = midpoint_offset * stds + means
         x = midpoint_offset[..., 0]
         y = midpoint_offset[..., 1]
         w = midpoint_offset[..., 2]
@@ -320,9 +320,9 @@ class Encoder:
         delta_a = tl[..., 0, 0] - x_center
         delta_b = rt[..., 0, 1] - y_center
         deltas = torch.stack((x_center, y_center, w, h, delta_a, delta_b), dim=-1)
-        #means = deltas.new_tensor([0.0] * 6).unsqueeze(0)
-        #stds = deltas.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5]).unsqueeze(0)
-        #deltas = deltas.sub_(means).div_(stds)
+        means = deltas.new_tensor([0.0] * 6).unsqueeze(0)
+        stds = deltas.new_tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.5]).unsqueeze(0)
+        deltas = deltas.sub_(means).div_(stds)
         return deltas
 
     def __get_top_left_vertices(self, vertices: torch.Tensor):

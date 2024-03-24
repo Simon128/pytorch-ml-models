@@ -80,14 +80,12 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
             continue
         k = min(len(thr_cls), 35)
         top_idx = torch.topk(thr_cls[..., c], k=int(k)).indices
-        top_boxes = torch.gather(thr_regression, 0, top_idx.unsqueeze(-1).repeat((1, 5)))
+        top_boxes = thr_regression[top_idx]
         top_boxes = top_boxes.detach().clone().cpu().numpy()
 
-        for box in top_boxes:
-            rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
-            pts = cv2.boxPoints(rot) # type: ignore
-            pts = np.intp(pts) 
-            image_clone = cv2.drawContours(image_clone, [pts], 0, (0, 255, 0), 1) # type: ignore
+        for v in top_boxes:
+            pts = np.intp(v.copy()) 
+            image_clone = cv2.polylines(image_clone, [pts], True, (0, 255, 0), 1) # type: ignore
 
     #cv2.imwrite(f"{index} HEAD.png", image_clone)
     writer.add_image(f'class/head', torch.tensor(image_clone).permute((2, 0, 1))/255, index)
@@ -95,7 +93,8 @@ def visualize_head_predictions(image: np.ndarray, prediction: OrientedRCNNOutput
 def visualize_targets(image: np.ndarray, boxes: torch.Tensor, index: int, writer: SummaryWriter):
     image_clone = image.copy()
 
-    top_boxes = encode(boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_TL_RT)
+    top_boxes = encode(boxes, Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
+    top_boxes[..., -1] = top_boxes[..., -1] * 180 / np.pi
     for box in top_boxes:
         rot = ((box[0].item(), box[1].item()), (box[2].item(), box[3].item()), box[4].item())
         pts = cv2.boxPoints(rot) # type: ignore
@@ -170,14 +169,14 @@ if __name__ == "__main__":
             "head": {
                 "num_classes": 3,
                 "out_channels": 1024,
-                "inject_annotation": True
+                "inject_annotation": False
             }
         }
     ).to(device)
     model.train()
     optimizer = torch.optim.SGD([
         {"params": model.parameters()}
-        ], lr=0.005, momentum=0.9, weight_decay=1e-4)
+        ], lr=0.0001, momentum=0.9, weight_decay=1e-4)
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
 
     running_loss_rpn: LossOutput | None = None
