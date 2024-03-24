@@ -68,5 +68,4 @@ def nms_rotated(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float)
         keep (Tensor): int64 tensor with the indices of the elements that have been kept
         by Rotated NMS, sorted in decreasing order of scores
     """
-    boxes[..., -1] = boxes[..., -1] * 180 / np.pi
     return _C.nms_rotated(boxes, scores, iou_threshold)

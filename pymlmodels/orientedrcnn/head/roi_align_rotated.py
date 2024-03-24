@@ -136,7 +136,7 @@ class RoIAlignRotatedWrapper(ROIAlignRotated):
         for b_idx in range(len(rpn_proposals)):
             roi_format = encode(rpn_proposals[b_idx], Encodings.VERTICES, Encodings.THETA_FORMAT_BL_RB)
             # rad to degree
-            roi_format[..., -1] = roi_format[..., -1] * 180 / np.pi
+            #roi_format[..., -1] = roi_format[..., -1] * 180 / np.pi
             n = roi_format.shape[0]
             b_idx_tensor = torch.full((n, 1), b_idx, device=roi_format.device)
             result[b_idx] = torch.concatenate((b_idx_tensor, roi_format), dim=-1) # type:ignore

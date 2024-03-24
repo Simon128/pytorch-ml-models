@@ -16,6 +16,4 @@ def pairwise_iou_rotated(boxes1, boxes2):
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
-    boxes1[..., -1] = boxes1[..., -1] * 180 / np.pi
-    boxes2[..., -1] = boxes2[..., -1] * 180 / np.pi
     return _C.box_iou_rotated(boxes1, boxes2)
