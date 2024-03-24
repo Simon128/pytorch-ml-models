@@ -25,8 +25,8 @@ def sample_randomly_adjusted_vertices(vertices: torch.Tensor, n_samples=1000):
     r_idx = np.random.randint(0, len(vertices), size=(n_samples,))
     samples = vertices[r_idx]
     midpoint_offset = encode(samples, Encodings.VERTICES, Encodings.MIDPOINT_OFFSET)
-    #adjusted = randomly_adjust_midpoint_offset(midpoint_offset)
-    return encode(midpoint_offset, Encodings.MIDPOINT_OFFSET, Encodings.VERTICES)
+    adjusted = randomly_adjust_midpoint_offset(midpoint_offset)
+    return encode(adjusted, Encodings.MIDPOINT_OFFSET, Encodings.VERTICES)
 
 def randomly_adjust_midpoint_offset(midpoint_offset: torch.Tensor):
     x = midpoint_offset[..., 0]
