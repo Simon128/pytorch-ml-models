@@ -156,7 +156,7 @@ class OrientedRCNNHead(nn.Module):
             fpn_feat: OrderedDict, 
             ground_truth: Annotation | None = None
         ):
-        if True or (self.training and self.inject_annotation):
+        if self.training and self.inject_annotation:
             self._inject_annotations(proposals, ground_truth) # type:ignore
 
         # detaching proposals is key to prevent gradient 
