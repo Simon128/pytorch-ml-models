@@ -121,13 +121,14 @@ class DataPrep:
             radius = gaussian_radius((math.ceil(bbox_h), math.ceil(bbox_w)))
             radius = max(0, int(radius))
             ct = np.asarray([cen_x, cen_y], dtype=np.float32)
+
             ct_int = ct.astype(np.int32)
             if len(hm[annotation['cat'][k]].shape) > 2:
                 obj_hm = hm[annotation['cat'][k]][0]
             else:
                 obj_hm = hm[annotation['cat'][k]]
             hm[annotation['cat'][k]] = draw_umich_gaussian(obj_hm, ct_int, radius)
-            ind[k] = ct_int[1] * image_w + ct_int[0]
+            ind[k] = min(ct_int[1], image_w - 1) * image_w + ct_int[0]
             reg[k] = ct - ct_int
             reg_mask[k] = 1
             # generate wh ground_truth

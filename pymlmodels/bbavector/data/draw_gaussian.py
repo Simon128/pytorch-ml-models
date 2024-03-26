@@ -45,7 +45,4 @@ def draw_umich_gaussian(heatmap, center, radius, k=1):
     masked_gaussian = gaussian[radius - top:radius + bottom, radius - left:radius + right]
     if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:  # TODO debug
         np.maximum(masked_heatmap, masked_gaussian * k, out=masked_heatmap)
-    import torch
-    if torch.tensor(heatmap).sum() == 0:
-        test = 5
     return heatmap

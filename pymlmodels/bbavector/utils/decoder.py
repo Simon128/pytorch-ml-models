@@ -117,9 +117,7 @@ class DecDecoder(object):
             br = bb + rr - cen_pt
             score = predictions[b][..., 10]
             clse = predictions[b][..., 11]
-            pts = torch.stack([tr, br, bl, tl], dim=-2)
-            pts[:, 0] = pts[:, 0] * down_ratio
-            pts[:, 1] = pts[:, 1] * down_ratio
+            pts = torch.stack([tr, br, bl, tl], dim=-2) * down_ratio
             pts0.append(pts)
             scores0.append(score)
             cls0.append(clse)

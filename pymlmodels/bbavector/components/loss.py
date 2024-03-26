@@ -106,10 +106,28 @@ class LossAll(torch.nn.Module):
         self.L_cls_theta = BCELoss()
 
     def forward(self, pr_decs, ann: BBAVectorAnnotation):
-        hm_loss  = self.L_hm(pr_decs['hm'], ann.target_heatmap)
-        wh_loss  = self.L_wh(pr_decs['wh'], ann.target_mask, ann.target_index, ann.target_vector)
-        off_loss = self.L_off(pr_decs['reg'], ann.target_mask, ann.target_index, ann.target_offset)
-        cls_theta_loss = self.L_cls_theta(pr_decs['cls_theta'], ann.target_mask, ann.target_index, ann.target_orientation)
+        t1, t2, t3, t4 = (
+            pr_decs['wh'].clone().cpu(), 
+            ann.target_mask.clone().cpu(), 
+            ann.target_index.clone().cpu(), 
+            ann.target_vector.clone().cpu()
+        )
+        try:
+            hm_loss  = self.L_hm(pr_decs['hm'], ann.target_heatmap)
+        except:
+            hm_loss  = self.L_hm(pr_decs['hm'], ann.target_heatmap)
+        try: 
+            wh_loss  = self.L_wh(pr_decs['wh'], ann.target_mask, ann.target_index, ann.target_vector)
+        except:
+            wh_loss  = self.L_wh(t1, t2, t3, t4)
+        try:
+            off_loss = self.L_off(pr_decs['reg'], ann.target_mask, ann.target_index, ann.target_offset)
+        except:
+            off_loss = self.L_off(pr_decs['reg'], ann.target_mask, ann.target_index, ann.target_offset)
+        try:
+            cls_theta_loss = self.L_cls_theta(pr_decs['cls_theta'], ann.target_mask, ann.target_index, ann.target_orientation)
+        except:
+            cls_theta_loss = self.L_cls_theta(pr_decs['cls_theta'], ann.target_mask, ann.target_index, ann.target_orientation)
         loss =  hm_loss + wh_loss + off_loss + cls_theta_loss
         return BBAVectorLoss(
             total_loss=loss,
