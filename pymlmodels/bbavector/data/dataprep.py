@@ -55,6 +55,8 @@ class DataPrep:
         size_thresh = 3
         out_rects = []
         out_cat = []
+        if len(annotation["pts"]) == 1:
+            annotation["cat"] = annotation["cat"][None,]
         for pt_old, cat in zip(annotation['pts'] , annotation['cat']):
             rect = cv2.minAreaRect(pt_old/self.down_ratio)
             if rect[1][0]<size_thresh and rect[1][1]<size_thresh:

@@ -4,6 +4,7 @@ from collections import OrderedDict
 from torchvision.ops import nms
 import torch.nn.functional as F
 from torchvision.ops import box_iou
+import torch.distributed as torchdist
 
 from ..utils.sampler import BalancedSampler
 from ..utils import RPNOutput, encode, Encodings, Annotation, LossOutput, normalize
@@ -162,6 +163,10 @@ class OrientedRPN(nn.Module):
                     reduction="mean",
                     beta=0.1111111111111
                 )
+            if torchdist.is_initialized() and torchdist.get_world_size() > 1:
+                # prevent unused parameters (which crashes DDP)
+                # is there a better way?
+                regression_loss = regression_loss + torch.sum(flat_regression.flatten()) * 0
 
         cls_loss = cls_loss / batch_num
         regression_loss = regression_loss / batch_num
